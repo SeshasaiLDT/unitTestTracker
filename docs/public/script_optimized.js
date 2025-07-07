@@ -166,6 +166,8 @@ async function handleFolderUpload(event) {
         return;
     }
     
+    console.log("Folder upload triggered:", event);
+    
     // Safety check to ensure the event and its target exist
     if (!event || !event.target || !event.target.files) {
         console.error('Invalid event object in handleFolderUpload', event);
@@ -173,13 +175,47 @@ async function handleFolderUpload(event) {
         return;
     }
     
-    const files = Array.from(event.target.files || []);
-    if (files.length === 0) {
-        alert('No files selected. Please select a folder containing Java files.');
-        return;
+    try {
+        // Debug the file selection
+        console.log("Files selected:", event.target.files.length);
+        
+        // Convert FileList to Array with proper error handling
+        let files = [];
+        try {
+            files = Array.from(event.target.files || []);
+        } catch (err) {
+            console.error("Error converting FileList to Array:", err);
+            
+            // Fallback to manual copy
+            files = [];
+            for (let i = 0; i < event.target.files.length; i++) {
+                files.push(event.target.files[i]);
+            }
+        }
+        
+        if (files.length === 0) {
+            alert('No files selected. Please select a folder containing Java files.');
+            return;
+        }
+        
+        console.log("First few files:", files.slice(0, 3));
+        
+        // Ensure webkitRelativePath exists (fix for Firefox/some browsers)
+        files = files.map(file => {
+            if (!file.webkitRelativePath && file.name && file.path) {
+                console.log("Adding missing webkitRelativePath", file.name);
+                file.webkitRelativePath = file.path || file.name;
+            }
+            return file;
+        });
+        
+        await processFilesOptimized(files);
+    } catch (error) {
+        console.error("Critical error in handleFolderUpload:", error);
+        alert('Error processing folder: ' + error.message);
+        isProcessing = false;
+        hideProgressModal();
     }
-    
-    await processFilesOptimized(files);
 }
 
 // Handle individual file upload
@@ -361,29 +397,69 @@ async function processFilesOptimized(fileList) {
 
 // Process individual file with optimized lookups
 function processIndividualFile(file, testFileMap, docFileMap) {
-    const filePath = file.webkitRelativePath || file.name;
-    const pathParts = filePath.split('/');
-    const fileName = pathParts[pathParts.length - 1];
-    const directory = pathParts.slice(0, -1).join('/') || 'root';
-    
-    // Fast lookup for test and doc files using maps
-    const testFile = testFileMap.get(fileName) || testFileMap.get(filePath);
-    const docFile = docFileMap.get(fileName) || docFileMap.get(filePath);
-    
-    return {
-        id: generateId(),
-        name: fileName,
-        relativePath: filePath,
-        directory: directory,
-        testCompleted: !!testFile,
-        docCompleted: !!docFile,
-        autoDetectedTest: !!testFile,
-        autoDetectedDoc: !!docFile,
-        testFile: testFile ? testFile.name : null,
-        docFile: docFile ? docFile.name : null,
-        notes: '',
-        lastModified: new Date().toISOString()
-    };
+    try {
+        // Input validation
+        if (!file) {
+            console.error("Null or undefined file passed to processIndividualFile");
+            throw new Error("Invalid file object");
+        }
+        
+        if (!file.name) {
+            console.error("File object missing name property:", file);
+            throw new Error("File missing required properties");
+        }
+        
+        // Get file path and handle potential path format issues
+        const filePath = file.webkitRelativePath || file.name;
+        
+        // Parse path components
+        const pathParts = filePath.split('/');
+        const fileName = pathParts[pathParts.length - 1];
+        const directory = pathParts.slice(0, -1).join('/') || 'root';
+        
+        // Debug logging for problematic files
+        if (!fileName || fileName.length === 0) {
+            console.warn("Warning: Empty file name detected", file);
+        }
+        
+        // Fast lookup for test and doc files using maps (with safeguards)
+        const testFile = testFileMap.get(fileName) || testFileMap.get(filePath);
+        const docFile = docFileMap.get(fileName) || docFileMap.get(filePath);
+        
+        return {
+            id: generateId(),
+            name: fileName,
+            relativePath: filePath,
+            directory: directory,
+            testCompleted: !!testFile,
+            docCompleted: !!docFile,
+            autoDetectedTest: !!testFile,
+            autoDetectedDoc: !!docFile,
+            testFile: testFile ? testFile.name : null,
+            docFile: docFile ? docFile.name : null,
+            notes: '',
+            lastModified: new Date().toISOString()
+        };
+    } catch (error) {
+        console.error("Error in processIndividualFile:", error, file);
+        
+        // Return a safe default object to avoid crashing
+        return {
+            id: generateId(),
+            name: file?.name || "unknown-file",
+            relativePath: file?.webkitRelativePath || file?.name || "unknown-path",
+            directory: "errors",
+            testCompleted: false,
+            docCompleted: false,
+            autoDetectedTest: false,
+            autoDetectedDoc: false,
+            testFile: null,
+            docFile: null,
+            notes: 'Error processing this file: ' + error.message,
+            lastModified: new Date().toISOString(),
+            hasError: true
+        };
+    }
 }
 
 // Update loading message
@@ -436,23 +512,48 @@ async function buildFolderStructureOptimized() {
         const batch = allFiles.slice(i, i + BATCH_SIZE);
         
         batch.forEach(file => {
-            const pathParts = file.directory.split('/').filter(part => part);
-            let currentLevel = folderStructure;
-            
-            pathParts.forEach(part => {
-                if (!currentLevel[part]) {
-                    currentLevel[part] = { files: [], subfolders: {} };
+            try {
+                if (!file || !file.directory) {
+                    console.error("Invalid file object encountered:", file);
+                    return; // Skip this file
                 }
-                currentLevel = currentLevel[part].subfolders;
-            });
-            
-            // Add file to the appropriate folder
-            const finalFolder = pathParts.length > 0 ? 
-                pathParts.reduce((level, part) => level[part], folderStructure) :
-                { files: [] };
                 
-            if (!finalFolder.files) finalFolder.files = [];
-            finalFolder.files.push(file);
+                const pathParts = file.directory.split('/').filter(part => part);
+                let currentLevel = folderStructure;
+                
+                pathParts.forEach(part => {
+                    if (!currentLevel[part]) {
+                        currentLevel[part] = { files: [], subfolders: {} };
+                    }
+                    currentLevel = currentLevel[part].subfolders;
+                });
+                
+                // Add file to the appropriate folder
+                let finalFolder;
+                if (pathParts.length > 0) {
+                    // Navigate to the correct folder
+                    finalFolder = folderStructure;
+                    for (const part of pathParts) {
+                        finalFolder = finalFolder[part];
+                    }
+                } else {
+                    // Root level files
+                    if (!folderStructure.root) {
+                        folderStructure.root = { files: [], subfolders: {} };
+                    }
+                    finalFolder = folderStructure.root;
+                }
+                
+                // Ensure the files array exists
+                if (!finalFolder.files) {
+                    finalFolder.files = [];
+                }
+                
+                // Add the file
+                finalFolder.files.push(file);
+            } catch (err) {
+                console.error("Error processing file in buildFolderStructureOptimized:", err, file);
+            }
         });
         
         // Allow UI to update
@@ -988,41 +1089,138 @@ function clearAllData() {
 
 // Progress Modal Functions
 function showProgressModal() {
-    const progressModal = document.getElementById('progressModal');
-    if (progressModal) {
+    try {
+        const progressModal = document.getElementById('progressModal');
+        if (!progressModal) {
+            console.error("Progress modal element not found in DOM");
+            return;
+        }
+        
         progressModal.style.display = 'block';
+        
         // Reset progress state
         updateProgress(0, 'Starting...', 'Initializing file processing...');
+        
+        console.log("Progress modal shown");
+    } catch (error) {
+        console.error("Error showing progress modal:", error);
     }
 }
 
 function hideProgressModal() {
-    const progressModal = document.getElementById('progressModal');
-    if (progressModal) {
+    try {
+        const progressModal = document.getElementById('progressModal');
+        if (!progressModal) {
+            console.error("Progress modal element not found in DOM");
+            return;
+        }
+        
+        // Use a shorter timeout to avoid blocking the UI
         setTimeout(() => {
-            progressModal.style.display = 'none';
-        }, 1000); // Show completion for 1 second before hiding
+            try {
+                progressModal.style.display = 'none';
+                console.log("Progress modal hidden");
+            } catch (err) {
+                console.error("Error hiding progress modal:", err);
+            }
+        }, 500);
+    } catch (error) {
+        console.error("Error in hideProgressModal:", error);
     }
 }
 
 // Enhanced progress modal with performance metrics
 function updateProgress(percentage, mainText, subText = '', timeEstimate = '') {
-    const modal = document.getElementById('progressModal');
-    if (!modal) return;
-    
-    const progressBar = modal.querySelector('.progress-bar');
-    const mainTextEl = modal.querySelector('.progress-main-text');
-    const subTextEl = modal.querySelector('.progress-sub-text');
-    const timeEstimateEl = modal.querySelector('.progress-time-estimate');
-    
-    if (progressBar) progressBar.style.width = percentage + '%';
-    if (mainTextEl) mainTextEl.textContent = mainText;
-    if (subTextEl) subTextEl.textContent = subText;
-    if (timeEstimateEl) timeEstimateEl.textContent = timeEstimate;
-    
-    // Update performance metrics
-    if (percentage === 0) {
-        performanceMetrics.startTime = Date.now();
+    try {
+        const modal = document.getElementById('progressModal');
+        if (!modal) {
+            console.error("Progress modal not found for updating progress");
+            return;
+        }
+        
+        // Progress bar could be in different elements depending on HTML version
+        const progressBar = modal.querySelector('.progress-fill') || 
+                           modal.querySelector('.progress-bar');
+        
+        // Try multiple selectors for each element type to handle both HTML versions
+        // Status text elements
+        const statusTextElements = [
+            modal.querySelector('#progressStatus'),
+            modal.querySelector('.progress-status'),
+            modal.querySelector('#progressTitle'),
+            modal.querySelector('.progress-main-text'),
+            modal.querySelector('#progressMessage')
+        ].filter(Boolean); // Remove null/undefined entries
+        
+        // Message elements 
+        const messageElements = [
+            modal.querySelector('#progressMessage'),
+            modal.querySelector('.progress-sub-text'),
+            modal.querySelector('#progressStats')
+        ].filter(Boolean);
+        
+        // Stats/time estimate elements
+        const statsElements = [
+            modal.querySelector('#progressTimeEstimate'),
+            modal.querySelector('.progress-time-estimate'),
+            modal.querySelector('#progressStats'),
+            modal.querySelector('.progress-stats')
+        ].filter(Boolean);
+        
+        // Percentage display
+        const percentageElements = [
+            modal.querySelector('#progressPercentage'),
+            modal.querySelector('.progress-percentage')
+        ].filter(Boolean);
+        
+        // Validate percentage is a number
+        if (isNaN(percentage)) {
+            console.warn("Invalid percentage passed to updateProgress:", percentage);
+            percentage = 0;
+        }
+        
+        // Cap percentage between 0 and 100
+        percentage = Math.max(0, Math.min(100, percentage));
+        
+        // Update UI with verbose error handling
+        if (progressBar) {
+            progressBar.style.width = percentage + '%';
+        } else {
+            console.warn("Progress bar element not found in modal");
+        }
+        
+        // Update percentage text displays
+        percentageElements.forEach(el => {
+            if (el) el.textContent = `${Math.round(percentage)}%`;
+        });
+        
+        // Update all status text elements
+        statusTextElements.forEach(el => {
+            if (el) el.textContent = mainText || '';
+        });
+        
+        // Update all message elements
+        messageElements.forEach(el => {
+            if (el) el.textContent = subText || '';
+        });
+        
+        // Update all stats/time elements
+        statsElements.forEach(el => {
+            if (el) el.textContent = timeEstimate || '';
+        });
+        
+        // Update performance metrics
+        if (percentage === 0) {
+            performanceMetrics.startTime = Date.now();
+            console.log("Starting performance tracking");
+        }
+        
+        // Log progress at key points
+        if (percentage % 25 === 0) {
+            console.log(`Progress update: ${percentage}% - ${mainText}`);
+        }
+    } catch (error) {
+        console.error("Error updating progress:", error);
     }
 }
 

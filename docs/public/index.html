@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Java Unit Test Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>☕ Java Unit Test Tracker</h1>
+            <p>Track unit tests and documentation completion for your Java project</p>
+        </header>
+
+        <div class="stats-section">
+            <div class="stat-card">
+                <h3>Total Files</h3>
+                <div class="stat-number" id="totalFiles">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Tests Completed</h3>
+                <div class="stat-number" id="completedTests">0</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="testProgress" style="width: 0%"></div>
+                </div>
+                <div class="progress-text" id="testProgressText">0%</div>
+            </div>
+            <div class="stat-card">
+                <h3>Docs Completed</h3>
+                <div class="stat-number" id="completedDocs">0</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="docProgress" style="width: 0%"></div>
+                </div>
+                <div class="progress-text" id="docProgressText">0%</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search files by name or path...">
+            </div>
+            <div class="filters">
+                <label>
+                    <input type="checkbox" id="showIncomplete" checked> Show incomplete only
+                </label>
+                <label>
+                    <input type="checkbox" id="showCompleted" checked> Show completed
+                </label>
+                <select id="sortBy">
+                    <option value="name">Sort by Name</option>
+                    <option value="path">Sort by Path</option>
+                    <option value="status">Sort by Status</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="files-section">
+            <div class="section-header">
+                <h2>Java Files</h2>
+                <div class="last-scan" id="lastScan">Last scan: Never</div>
+            </div>
+            <div class="files-grid" id="filesGrid">
+                <!-- Files will be loaded here -->
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Loading files...</p>
+        </div>
+
+        <div class="no-files" id="noFiles" style="display: none;">
+            <h3>No Java files found</h3>
+            <p>Run the scan command to find Java files in your project:</p>
+            <code>npm run scan "C:\path\to\your\java\project"</code>
+        </div>
+    </div>
+
+    <!-- File Detail Modal -->
+    <div class="modal" id="fileModal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2 id="modalTitle">File Details</h2>
+            <div class="modal-body">
+                <div class="file-info">
+                    <p><strong>Path:</strong> <span id="modalPath"></span></p>
+                    <p><strong>Directory:</strong> <span id="modalDirectory"></span></p>
+                </div>
+                <div class="completion-status">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="modalTestCompleted">
+                        <span class="checkmark"></span>
+                        Unit Test Completed
+                        <small id="testAutoDetected" class="auto-detected" style="display: none;">
+                            (Auto-detected: test file found)
+                        </small>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="modalDocCompleted">
+                        <span class="checkmark"></span>
+                        Documentation Completed
+                        <small id="docAutoDetected" class="auto-detected" style="display: none;">
+                            (Auto-detected: PDF file found)
+                        </small>
+                    </label>
+                </div>
+                <div class="notes-section">
+                    <label for="modalNotes">Notes:</label>
+                    <textarea id="modalNotes" placeholder="Add any notes about this file..."></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button id="saveChanges" class="btn btn-primary">Save Changes</button>
+                    <button id="cancelChanges" class="btn btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

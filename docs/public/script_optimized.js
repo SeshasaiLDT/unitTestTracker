@@ -933,18 +933,31 @@ function updateProgress(percentage, mainText, subText = '', timeEstimate = '') {
     if (!modal) return;
     
     const progressBar = modal.querySelector('.progress-bar');
+    const progressPercentage = document.getElementById('progressPercentage');
+    const progressStatus = document.getElementById('progressStatus');
     const mainTextEl = modal.querySelector('.progress-main-text');
     const subTextEl = modal.querySelector('.progress-sub-text');
     const timeEstimateEl = modal.querySelector('.progress-time-estimate');
     
     if (progressBar) progressBar.style.width = percentage + '%';
-    if (mainTextEl) mainTextEl.textContent = mainText;
-    if (subTextEl) subTextEl.textContent = subText;
+    if (progressPercentage) progressPercentage.textContent = `${Math.round(percentage)}%`;
+    if (progressStatus) progressStatus.textContent = mainText;
+    if (mainTextEl) mainTextEl.textContent = subText;
     if (timeEstimateEl) timeEstimateEl.textContent = timeEstimate;
     
     // Update performance metrics
     if (percentage === 0) {
         performanceMetrics.startTime = Date.now();
+    }
+    
+    // Add completion styling when done
+    if (percentage >= 100) {
+        if (progressStatus) {
+            progressStatus.style.color = '#28a745';
+        }
+        if (mainTextEl) {
+            mainTextEl.style.color = '#28a745';
+        }
     }
 }
 

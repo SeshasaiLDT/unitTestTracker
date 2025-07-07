@@ -1034,12 +1034,6 @@ header p {
     border-radius: 3px;
 }
 
-.completion-text {
-    font-size: 0.75rem;
-    color: #666;
-    font-weight: 500;
-}
-
 /* No Results State */
 .no-results {
     text-align: center;
@@ -1273,52 +1267,52 @@ header p {
     margin: 15px 0;
 }
 
-/* Large file list optimizations */
-.file-tree-container {
-    contain: layout style paint;
-    will-change: scroll-position;
-}
-
-.directory-files {
-    contain: layout style;
-}
-
-.file-item {
-    contain: layout style paint;
-}
-
-/* Virtual scrolling container */
-.virtual-scroll-container {
-    height: 600px;
-    overflow-y: auto;
-    position: relative;
-}
-
-/* Loading animation improvements */
-.loading {
-    position: relative;
-}
-
-.loading-overlay {
+/* Performance notification for large datasets */
+.performance-notification {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0,0,0,0.5);
-    z-index: 1000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, #28a745, #20c997);
+    color: white;
+    padding: 15px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 10000;
+    animation: slideInRight 0.3s ease-out;
+    max-width: 300px;
 }
 
-.loading-content {
-    background: white;
-    padding: 30px;
-    border-radius: 10px;
-    text-align: center;
-    max-width: 400px;
-    width: 90%;
+.perf-summary {
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.perf-summary strong {
+    font-size: 16px;
+}
+
+.perf-summary small {
+    opacity: 0.9;
+    font-style: italic;
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Enhanced progress modal for time estimates */
+.progress-modal .progress-time-estimate {
+    font-size: 12px;
+    color: #666;
+    margin-top: 5px;
+    font-style: italic;
 }
 
 /* Responsive Design */

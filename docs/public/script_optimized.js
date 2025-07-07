@@ -12,6 +12,19 @@ let developerAssignments = {}; // Store developer assignments per folder path
 const BATCH_SIZE = 100; // Process files in batches
 const RENDER_BATCH_SIZE = 50; // Render files in smaller batches
 const VIRTUAL_SCROLL_THRESHOLD = 1000; // Use virtual scrolling for large lists
+const LARGE_DATASET_THRESHOLD = 10000; // Enhanced optimizations for very large datasets
+const MAX_INITIAL_RENDER = 500; // Limit initial render for performance
+
+// Web Worker support check
+const SUPPORTS_WEB_WORKERS = typeof Worker !== 'undefined';
+
+// Performance monitoring
+let performanceMetrics = {
+    startTime: null,
+    processingTime: null,
+    renderTime: null,
+    totalFiles: 0
+};
 
 // DOM Elements Cache
 const elements = {};
@@ -207,13 +220,18 @@ async function processFilesOptimized(fileList) {
         
         updateProgress(15, 'Processing Java files in optimized batches...', 'Starting batch processing...');
         
-        // Process files in batches to prevent UI blocking
+        // Use dynamic batch sizing for optimal performance
+        const optimalBatchSize = getOptimalBatchSize(javaFiles.length);
         const processedFiles = [];
-        const totalBatches = Math.ceil(javaFiles.length / BATCH_SIZE);
+        const totalBatches = Math.ceil(javaFiles.length / optimalBatchSize);
         
-        for (let i = 0; i < javaFiles.length; i += BATCH_SIZE) {
-            const batch = javaFiles.slice(i, i + BATCH_SIZE);
-            const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
+        // Performance tracking
+        performanceMetrics.totalFiles = javaFiles.length;
+        const processingStartTime = Date.now();
+        
+        for (let i = 0; i < javaFiles.length; i += optimalBatchSize) {
+            const batch = javaFiles.slice(i, i + optimalBatchSize);
+            const currentBatch = Math.floor(i / optimalBatchSize) + 1;
             const batchProgress = 15 + ((currentBatch - 1) / totalBatches) * 60; // 15% to 75%
             
             // Calculate time estimates
@@ -226,7 +244,7 @@ async function processFilesOptimized(fileList) {
             updateProgress(
                 batchProgress, 
                 `Processing batch ${currentBatch}/${totalBatches}`,
-                `Files ${i + 1}-${Math.min(i + BATCH_SIZE, javaFiles.length)} of ${javaFiles.length}`,
+                `Files ${i + 1}-${Math.min(i + optimalBatchSize, javaFiles.length)} of ${javaFiles.length}`,
                 estimatedTimeRemaining > 0 ? `Estimated time remaining: ${formatTime(estimatedTimeRemaining)}` : ''
             );
             
@@ -252,6 +270,10 @@ async function processFilesOptimized(fileList) {
         
         updateProgress(90, 'Building folder structure...', 'Organizing files into hierarchy...');
         
+        // Record processing completion time
+        performanceMetrics.processingTime = Date.now() - processingStartTime;
+        const renderStartTime = Date.now();
+        
         // Update UI
         await buildFolderStructureOptimized();
         updateStatistics();
@@ -260,7 +282,17 @@ async function processFilesOptimized(fileList) {
         updateProgress(95, 'Rendering file tree...', 'Preparing display...');
         await filterAndRenderFilesOptimized();
         
+        // Record total performance metrics
+        performanceMetrics.renderTime = Date.now() - renderStartTime;
+        
         updateProgress(100, 'Complete!', `Successfully processed ${newFiles.length} new files!`);
+        
+        // Report performance metrics
+        reportPerformanceMetrics(
+            performanceMetrics.totalFiles,
+            performanceMetrics.processingTime,
+            performanceMetrics.renderTime
+        );
         
         // Hide progress modal after a brief delay
         setTimeout(() => {
@@ -895,41 +927,64 @@ function hideProgressModal() {
     }
 }
 
-function updateProgress(percentage, status, message, stats = '') {
-    const progressFill = document.getElementById('progressFill');
-    const progressPercentage = document.getElementById('progressPercentage');
-    const progressStatus = document.getElementById('progressStatus');
-    const progressMessage = document.getElementById('progressMessage');
-    const progressStats = document.getElementById('progressStats');
+// Enhanced progress modal with performance metrics
+function updateProgress(percentage, mainText, subText = '', timeEstimate = '') {
+    const modal = document.getElementById('progressModal');
+    if (!modal) return;
     
-    if (progressFill) {
-        progressFill.style.width = `${Math.min(100, Math.max(0, percentage))}%`;
+    const progressBar = modal.querySelector('.progress-bar');
+    const mainTextEl = modal.querySelector('.progress-main-text');
+    const subTextEl = modal.querySelector('.progress-sub-text');
+    const timeEstimateEl = modal.querySelector('.progress-time-estimate');
+    
+    if (progressBar) progressBar.style.width = percentage + '%';
+    if (mainTextEl) mainTextEl.textContent = mainText;
+    if (subTextEl) subTextEl.textContent = subText;
+    if (timeEstimateEl) timeEstimateEl.textContent = timeEstimate;
+    
+    // Update performance metrics
+    if (percentage === 0) {
+        performanceMetrics.startTime = Date.now();
     }
+}
+
+// Format time in human-readable format
+function formatTime(milliseconds) {
+    if (milliseconds < 1000) return `${Math.round(milliseconds)}ms`;
     
-    if (progressPercentage) {
-        progressPercentage.textContent = `${Math.round(percentage)}%`;
-    }
+    const seconds = Math.round(milliseconds / 1000);
+    if (seconds < 60) return `${seconds}s`;
     
-    if (progressStatus) {
-        progressStatus.textContent = status;
-    }
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}m ${remainingSeconds}s`;
+}
+
+// Performance analysis and reporting
+function reportPerformanceMetrics(totalFiles, processingTime, renderTime) {
+    const totalTime = processingTime + renderTime;
+    const filesPerSecond = Math.round(totalFiles / (totalTime / 1000));
     
-    if (progressMessage) {
-        progressMessage.textContent = message;
-    }
+    console.log(`📊 Performance Report for ${totalFiles} files:`);
+    console.log(`⏱️ Processing Time: ${formatTime(processingTime)}`);
+    console.log(`🎨 Rendering Time: ${formatTime(renderTime)}`);
+    console.log(`⚡ Total Time: ${formatTime(totalTime)}`);
+    console.log(`📈 Throughput: ${filesPerSecond} files/second`);
     
-    if (progressStats && stats) {
-        progressStats.textContent = stats;
-    }
-    
-    // Add completion styling when done
-    if (percentage >= 100) {
-        if (progressStatus) {
-            progressStatus.style.color = '#28a745';
-        }
-        if (progressMessage) {
-            progressMessage.style.color = '#28a745';
-        }
+    // Show user-friendly summary for large datasets
+    if (totalFiles > 10000) {
+        const notification = document.createElement('div');
+        notification.className = 'performance-notification';
+        notification.innerHTML = `
+            <div class="perf-summary">
+                <strong>✅ Processing Complete!</strong><br>
+                Processed ${totalFiles.toLocaleString()} files in ${formatTime(totalTime)}<br>
+                <small>Performance: ${filesPerSecond} files/second</small>
+            </div>
+        `;
+        document.body.appendChild(notification);
+        
+        setTimeout(() => notification.remove(), 8000);
     }
 }
 

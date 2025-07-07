@@ -7,73 +7,122 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>☕ Java Unit Test Tracker</h1>
-            <p>Track unit tests and documentation completion for your Java project</p>
-        </header>
-
-        <div class="stats-section">
-            <div class="stat-card">
-                <h3>Total Files</h3>
-                <div class="stat-number" id="totalFiles">0</div>
+    <div class="main-layout">
+        <!-- Sidebar Navigation -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2>📁 Project Explorer</h2>
+                <p>Navigate through your Java project structure</p>
             </div>
-            <div class="stat-card">
-                <h3>Tests Completed</h3>
-                <div class="stat-number" id="completedTests">0</div>
-                <div class="progress-bar">
-                    <div class="progress-fill" id="testProgress" style="width: 0%"></div>
+            
+            <div class="folder-tree" id="folderTree">
+                <!-- Folder tree will be populated here -->
+            </div>
+            
+            <div class="data-management">
+                <div class="data-buttons">
+                    <button id="exportData" class="btn btn-primary">📥 Export</button>
+                    <label class="btn btn-secondary">
+                        <input type="file" id="importData" accept=".json" style="display: none;">
+                        📤 Import
+                    </label>
+                    <button id="clearData" class="btn btn-danger">🗑️ Clear</button>
                 </div>
-                <div class="progress-text" id="testProgressText">0%</div>
             </div>
-            <div class="stat-card">
-                <h3>Docs Completed</h3>
-                <div class="stat-number" id="completedDocs">0</div>
-                <div class="progress-bar">
-                    <div class="progress-fill" id="docProgress" style="width: 0%"></div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Header -->
+            <div class="content-header">
+                <h1>☕ Java Unit Test Tracker</h1>
+                <p>Track unit tests and documentation completion for your Java project</p>
+            </div>
+
+            <!-- Upload Section -->
+            <div class="upload-section" id="uploadSection">
+                <div class="upload-content">
+                    <h3>📁 Upload Java Project</h3>
+                    <p>Select your Java project folder to automatically scan for .java files and detect corresponding test and documentation files.</p>
+                    <div class="upload-buttons">
+                        <label class="upload-btn">
+                            <input type="file" id="folderInput" webkitdirectory multiple accept=".java,.pdf">
+                            📂 Select Project Folder
+                        </label>
+                        <label class="upload-btn secondary">
+                            <input type="file" id="fileInput" multiple accept=".java,.pdf">
+                            📄 Select Individual Files
+                        </label>
+                    </div>
                 </div>
-                <div class="progress-text" id="docProgressText">0%</div>
             </div>
-        </div>
 
-        <div class="controls">
-            <div class="search-box">
-                <input type="text" id="searchInput" placeholder="Search files by name or path...">
+            <!-- Stats and Controls -->
+            <div class="stats-controls" id="statsControls" style="display: none;">
+                <div class="stats-header">
+                    <h3>📊 Project Statistics</h3>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <span class="stat-number" id="totalFiles">0</span>
+                            <span class="stat-label">Total Files</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-number" id="completedTests">0</span>
+                            <span class="stat-label">Tests Complete</span>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="testProgress" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-number" id="completedDocs">0</span>
+                            <span class="stat-label">Docs Complete</span>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="docProgress" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="controls-section">
+                    <div class="search-filter-container">
+                        <div class="search-box">
+                            <input type="text" id="searchInput" placeholder="🔍 Search files by name or path...">
+                        </div>
+                        <div class="view-options">
+                            <button class="view-toggle active" id="showAll" data-filter="all">All Files</button>
+                            <button class="view-toggle" id="showIncomplete" data-filter="incomplete">Incomplete</button>
+                            <button class="view-toggle" id="showCompleted" data-filter="completed">Completed</button>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="filters">
-                <label>
-                    <input type="checkbox" id="showIncomplete" checked> Show incomplete only
-                </label>
-                <label>
-                    <input type="checkbox" id="showCompleted" checked> Show completed
-                </label>
-                <select id="sortBy">
-                    <option value="name">Sort by Name</option>
-                    <option value="path">Sort by Path</option>
-                    <option value="status">Sort by Status</option>
-                </select>
-            </div>
-        </div>
 
-        <div class="files-section">
-            <div class="section-header">
-                <h2>Java Files</h2>
-                <div class="last-scan" id="lastScan">Last scan: Never</div>
+            <!-- File Explorer -->
+            <div class="file-explorer" id="fileExplorer" style="display: none;">
+                <div class="explorer-header">
+                    <h3>🗂️ File Structure</h3>
+                    <div class="path-breadcrumb" id="pathBreadcrumb">📁 Root</div>
+                </div>
+                
+                <div class="explorer-content">
+                    <div class="file-tree-container" id="fileTreeContainer">
+                        <!-- File tree will be populated here -->
+                    </div>
+                </div>
             </div>
-            <div class="files-grid" id="filesGrid">
-                <!-- Files will be loaded here -->
+
+            <!-- Welcome Message -->
+            <div class="welcome-message" id="welcomeMessage">
+                <h2>🚀 Welcome to Java Unit Test Tracker</h2>
+                <p>Upload your Java project to get started. The tracker will automatically organize your files in a hierarchical structure and detect corresponding test files and documentation.</p>
+                <p style="margin-top: 20px;">Your files will be organized just like a file explorer - expand folders to see subfolders and files. Use the sidebar to navigate and filter specific sections of your project.</p>
             </div>
-        </div>
 
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <p>Loading files...</p>
-        </div>
-
-        <div class="no-files" id="noFiles" style="display: none;">
-            <h3>No Java files found</h3>
-            <p>Run the scan command to find Java files in your project:</p>
-            <code>npm run scan "C:\path\to\your\java\project"</code>
+            <!-- Loading State -->
+            <div class="loading" id="loading" style="display: none;">
+                <div class="spinner"></div>
+                <p>Processing your Java project...</p>
+            </div>
         </div>
     </div>
 
@@ -84,31 +133,44 @@
             <h2 id="modalTitle">File Details</h2>
             <div class="modal-body">
                 <div class="file-info">
-                    <p><strong>Path:</strong> <span id="modalPath"></span></p>
-                    <p><strong>Directory:</strong> <span id="modalDirectory"></span></p>
+                    <p><strong>📄 File:</strong> <span id="modalFileName"></span></p>
+                    <p><strong>📁 Path:</strong> <span id="modalPath"></span></p>
+                    <p><strong>📂 Directory:</strong> <span id="modalDirectory"></span></p>
                 </div>
+                
+                <div class="auto-detection-info">
+                    <h4>🔍 Auto-Detection Results</h4>
+                    <div class="detection-item">
+                        <span class="detection-label">Test File:</span>
+                        <span id="modalTestFile" class="detection-value">-</span>
+                        <span id="modalTestStatus" class="detection-status"></span>
+                    </div>
+                    <div class="detection-item">
+                        <span class="detection-label">Doc File:</span>
+                        <span id="modalDocFile" class="detection-value">-</span>
+                        <span id="modalDocStatus" class="detection-status"></span>
+                    </div>
+                </div>
+
                 <div class="completion-status">
+                    <h4>✅ Manual Status Override</h4>
                     <label class="checkbox-label">
                         <input type="checkbox" id="modalTestCompleted">
                         <span class="checkmark"></span>
                         Unit Test Completed
-                        <small id="testAutoDetected" class="auto-detected" style="display: none;">
-                            (Auto-detected: test file found)
-                        </small>
                     </label>
                     <label class="checkbox-label">
                         <input type="checkbox" id="modalDocCompleted">
                         <span class="checkmark"></span>
                         Documentation Completed
-                        <small id="docAutoDetected" class="auto-detected" style="display: none;">
-                            (Auto-detected: PDF file found)
-                        </small>
                     </label>
                 </div>
+                
                 <div class="notes-section">
-                    <label for="modalNotes">Notes:</label>
+                    <label for="modalNotes">📝 Notes:</label>
                     <textarea id="modalNotes" placeholder="Add any notes about this file..."></textarea>
                 </div>
+                
                 <div class="modal-actions">
                     <button id="saveChanges" class="btn btn-primary">Save Changes</button>
                     <button id="cancelChanges" class="btn btn-secondary">Cancel</button>
@@ -117,6 +179,6 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <script src="script_new.js"></script>
 </body>
 </html>

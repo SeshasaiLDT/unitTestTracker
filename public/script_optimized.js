@@ -349,6 +349,34 @@ function generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
+// Calculate optimal batch size based on file count and system capabilities
+function getOptimalBatchSize(fileCount) {
+    // Base batch size
+    let batchSize = BATCH_SIZE;
+    
+    // Adjust based on file count
+    if (fileCount < 1000) {
+        batchSize = Math.min(50, fileCount);
+    } else if (fileCount < 10000) {
+        batchSize = 100;
+    } else if (fileCount < 50000) {
+        batchSize = 200;
+    } else {
+        batchSize = 500;
+    }
+    
+    // Adjust based on available memory (rough estimation)
+    const availableMemory = navigator.deviceMemory || 4; // Default to 4GB if not available
+    if (availableMemory < 2) {
+        batchSize = Math.floor(batchSize * 0.5);
+    } else if (availableMemory > 8) {
+        batchSize = Math.floor(batchSize * 1.5);
+    }
+    
+    // Ensure minimum batch size of 10
+    return Math.max(10, batchSize);
+}
+
 // Optimized folder structure building
 async function buildFolderStructureOptimized() {
     folderStructure = {};
@@ -976,6 +1004,7 @@ function reportPerformanceMetrics(totalFiles, processingTime, renderTime) {
         const notification = document.createElement('div');
         notification.className = 'performance-notification';
         notification.innerHTML = `
+
             <div class="perf-summary">
                 <strong>✅ Processing Complete!</strong><br>
                 Processed ${totalFiles.toLocaleString()} files in ${formatTime(totalTime)}<br>

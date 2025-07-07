@@ -1,305 +1,666 @@
-// API Base URL
-const API_BASE = '/api';
-
+// Java Unit Test Tracker - Client-Side Implementation
 // Global state
 let allFiles = [];
 let filteredFiles = [];
+let folderStructure = {};
 let currentEditingFile = null;
+let selectedFolders = new Set(); // For sidebar filtering
 
-// DOM Elements
-const elementsCache = {};
+// DOM Elements Cache
+const elements = {};
 
 // Initialize the application
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener('DOMContentLoaded', () => {
     cacheElements();
     setupEventListeners();
-    await loadData();
+    loadFromLocalStorage();
+    updateUI();
 });
 
 // Cache DOM elements
 function cacheElements() {
-    elementsCache.totalFiles = document.getElementById('totalFiles');
-    elementsCache.completedTests = document.getElementById('completedTests');
-    elementsCache.completedDocs = document.getElementById('completedDocs');
-    elementsCache.testProgress = document.getElementById('testProgress');
-    elementsCache.docProgress = document.getElementById('docProgress');
-    elementsCache.testProgressText = document.getElementById('testProgressText');
-    elementsCache.docProgressText = document.getElementById('docProgressText');
-    elementsCache.lastScan = document.getElementById('lastScan');
-    elementsCache.filesGrid = document.getElementById('filesGrid');
-    elementsCache.loading = document.getElementById('loading');
-    elementsCache.noFiles = document.getElementById('noFiles');
-    elementsCache.searchInput = document.getElementById('searchInput');
-    elementsCache.showIncomplete = document.getElementById('showIncomplete');
-    elementsCache.showCompleted = document.getElementById('showCompleted');
-    elementsCache.sortBy = document.getElementById('sortBy');
-    elementsCache.fileModal = document.getElementById('fileModal');
-    elementsCache.modalTitle = document.getElementById('modalTitle');
-    elementsCache.modalPath = document.getElementById('modalPath');
-    elementsCache.modalDirectory = document.getElementById('modalDirectory');
-    elementsCache.modalTestCompleted = document.getElementById('modalTestCompleted');
-    elementsCache.modalDocCompleted = document.getElementById('modalDocCompleted');
-    elementsCache.modalNotes = document.getElementById('modalNotes');
-    elementsCache.saveChanges = document.getElementById('saveChanges');
-    elementsCache.cancelChanges = document.getElementById('cancelChanges');
-    elementsCache.closeModal = document.querySelector('.close');
+    elements.folderInput = document.getElementById('folderInput');
+    elements.fileInput = document.getElementById('fileInput');
+    elements.folderTree = document.getElementById('folderTree');
+    elements.fileTreeContainer = document.getElementById('fileTreeContainer');
+    elements.uploadSection = document.getElementById('uploadSection');
+    elements.statsControls = document.getElementById('statsControls');
+    elements.fileExplorer = document.getElementById('fileExplorer');
+    elements.welcomeMessage = document.getElementById('welcomeMessage');
+    elements.loading = document.getElementById('loading');
+    elements.pathBreadcrumb = document.getElementById('pathBreadcrumb');
+    
+    // Statistics
+    elements.totalFiles = document.getElementById('totalFiles');
+    elements.completedTests = document.getElementById('completedTests');
+    elements.completedDocs = document.getElementById('completedDocs');
+    elements.testProgress = document.getElementById('testProgress');
+    elements.docProgress = document.getElementById('docProgress');
+    
+    // Controls
+    elements.searchInput = document.getElementById('searchInput');
+    elements.showAll = document.getElementById('showAll');
+    elements.showIncomplete = document.getElementById('showIncomplete');
+    elements.showCompleted = document.getElementById('showCompleted');
+    
+    // Modal
+    elements.fileModal = document.getElementById('fileModal');
+    elements.modalTitle = document.getElementById('modalTitle');
+    elements.modalFileName = document.getElementById('modalFileName');
+    elements.modalPath = document.getElementById('modalPath');
+    elements.modalDirectory = document.getElementById('modalDirectory');
+    elements.modalTestFile = document.getElementById('modalTestFile');
+    elements.modalTestStatus = document.getElementById('modalTestStatus');
+    elements.modalDocFile = document.getElementById('modalDocFile');
+    elements.modalDocStatus = document.getElementById('modalDocStatus');
+    elements.modalTestCompleted = document.getElementById('modalTestCompleted');
+    elements.modalDocCompleted = document.getElementById('modalDocCompleted');
+    elements.modalNotes = document.getElementById('modalNotes');
+    elements.saveChanges = document.getElementById('saveChanges');
+    elements.cancelChanges = document.getElementById('cancelChanges');
+    elements.closeModal = document.querySelector('.close');
+    
+    // Data management
+    elements.exportData = document.getElementById('exportData');
+    elements.importData = document.getElementById('importData');
+    elements.clearData = document.getElementById('clearData');
 }
 
 // Setup event listeners
 function setupEventListeners() {
-    elementsCache.searchInput.addEventListener('input', filterFiles);
-    elementsCache.showIncomplete.addEventListener('change', filterFiles);
-    elementsCache.showCompleted.addEventListener('change', filterFiles);
-    elementsCache.sortBy.addEventListener('change', filterFiles);
-    elementsCache.saveChanges.addEventListener('click', saveFileChanges);
-    elementsCache.cancelChanges.addEventListener('click', closeModal);
-    elementsCache.closeModal.addEventListener('click', closeModal);
+    // File upload
+    elements.folderInput?.addEventListener('change', handleFolderUpload);
+    elements.fileInput?.addEventListener('change', handleFileUpload);
+    
+    // Search and filtering
+    elements.searchInput?.addEventListener('input', filterAndRenderFiles);
+    elements.showAll?.addEventListener('click', () => setFilter('all'));
+    elements.showIncomplete?.addEventListener('click', () => setFilter('incomplete'));
+    elements.showCompleted?.addEventListener('click', () => setFilter('completed'));
+    
+    // Modal
+    elements.saveChanges?.addEventListener('click', saveFileChanges);
+    elements.cancelChanges?.addEventListener('click', closeModal);
+    elements.closeModal?.addEventListener('click', closeModal);
+    
+    // Data management
+    elements.exportData?.addEventListener('click', exportData);
+    elements.importData?.addEventListener('change', importData);
+    elements.clearData?.addEventListener('click', clearAllData);
     
     // Close modal when clicking outside
     window.addEventListener('click', (e) => {
-        if (e.target === elementsCache.fileModal) {
+        if (e.target === elements.fileModal) {
             closeModal();
         }
     });
 }
 
-// Load data from API
-async function loadData() {
+// Handle folder upload
+async function handleFolderUpload(event) {
+    const files = Array.from(event.target.files);
+    await processFiles(files);
+}
+
+// Handle individual file upload
+async function handleFileUpload(event) {
+    const files = Array.from(event.target.files);
+    await processFiles(files);
+}
+
+// Process uploaded files
+async function processFiles(fileList) {
+    elements.loading.style.display = 'block';
+    
     try {
-        elementsCache.loading.style.display = 'block';
-        elementsCache.noFiles.style.display = 'none';
+        const javaFiles = fileList.filter(file => file.name.endsWith('.java'));
+        const pdfFiles = fileList.filter(file => file.name.endsWith('.pdf'));
         
-        const response = await fetch(`${API_BASE}/files`);
-        const data = await response.json();
+        if (javaFiles.length === 0) {
+            alert('No Java files found in the selected folder.');
+            return;
+        }
         
-        allFiles = data.files || [];
-        updateStatistics(data);
-        filterFiles();
+        // Create file objects
+        const processedFiles = javaFiles.map(file => {
+            const filePath = file.webkitRelativePath || file.name;
+            const pathParts = filePath.split('/');
+            const fileName = pathParts[pathParts.length - 1];
+            const directory = pathParts.slice(0, -1).join('/') || 'root';
+            
+            // Auto-detect test and doc files
+            const baseFileName = fileName.replace('.java', '');
+            const testFileName = `${baseFileName}_tests.java`;
+            const docFileName = `${baseFileName}.pdf`;
+            
+            const testFile = fileList.find(f => f.name === testFileName || f.webkitRelativePath?.endsWith(testFileName));
+            const docFile = fileList.find(f => f.name === docFileName || f.webkitRelativePath?.endsWith(docFileName));
+            
+            return {
+                id: generateId(),
+                name: fileName,
+                relativePath: filePath,
+                directory: directory,
+                testCompleted: !!testFile,
+                docCompleted: !!docFile,
+                autoDetectedTest: !!testFile,
+                autoDetectedDoc: !!docFile,
+                testFile: testFile ? testFile.name : null,
+                docFile: docFile ? docFile.name : null,
+                notes: '',
+                lastModified: new Date().toISOString()
+            };
+        });
+        
+        // Merge with existing files (avoid duplicates)
+        const existingPaths = new Set(allFiles.map(f => f.relativePath));
+        const newFiles = processedFiles.filter(f => !existingPaths.has(f.relativePath));
+        
+        allFiles = [...allFiles, ...newFiles];
+        
+        // Save to localStorage
+        saveToLocalStorage();
+        
+        // Update UI
+        buildFolderStructure();
+        updateStatistics();
+        updateUI();
+        filterAndRenderFiles();
+        
+        showSuccess(`Successfully processed ${newFiles.length} new Java files!`);
         
     } catch (error) {
-        console.error('Error loading data:', error);
-        showError('Failed to load data');
+        console.error('Error processing files:', error);
+        showError('Error processing files: ' + error.message);
     } finally {
-        elementsCache.loading.style.display = 'none';
+        elements.loading.style.display = 'none';
     }
 }
 
-// Update statistics display
-function updateStatistics(data) {
-    elementsCache.totalFiles.textContent = data.totalFiles || 0;
-    elementsCache.completedTests.textContent = data.completedTests || 0;
-    elementsCache.completedDocs.textContent = data.completedDocs || 0;
+// Generate unique ID
+function generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+// Build folder structure for navigation
+function buildFolderStructure() {
+    folderStructure = {};
     
-    const testProgress = data.totalFiles > 0 ? (data.completedTests / data.totalFiles * 100) : 0;
-    const docProgress = data.totalFiles > 0 ? (data.completedDocs / data.totalFiles * 100) : 0;
+    allFiles.forEach(file => {
+        const pathParts = file.directory.split('/').filter(part => part);
+        let currentLevel = folderStructure;
+        
+        pathParts.forEach(part => {
+            if (!currentLevel[part]) {
+                currentLevel[part] = { files: [], subfolders: {} };
+            }
+            currentLevel = currentLevel[part].subfolders;
+        });
+        
+        // Add file to the appropriate folder
+        const targetFolder = pathParts.reduce((level, part) => level[part].subfolders, folderStructure);
+        if (!folderStructure[pathParts[pathParts.length - 1]]) {
+            folderStructure[pathParts[pathParts.length - 1]] = { files: [], subfolders: {} };
+        }
+        const finalFolder = pathParts.length > 0 ? 
+            pathParts.reduce((level, part) => level[part], folderStructure) :
+            folderStructure;
+            
+        if (!finalFolder.files) finalFolder.files = [];
+        finalFolder.files.push(file);
+    });
     
-    elementsCache.testProgress.style.width = `${testProgress}%`;
-    elementsCache.docProgress.style.width = `${docProgress}%`;
-    elementsCache.testProgressText.textContent = `${testProgress.toFixed(1)}%`;
-    elementsCache.docProgressText.textContent = `${docProgress.toFixed(1)}%`;
+    renderFolderTree();
+}
+
+// Render folder tree in sidebar
+function renderFolderTree() {
+    if (!elements.folderTree) return;
     
-    if (data.lastScan) {
-        const scanDate = new Date(data.lastScan);
-        elementsCache.lastScan.textContent = `Last scan: ${scanDate.toLocaleString()}`;
+    const html = renderFolderLevel(folderStructure, '');
+    elements.folderTree.innerHTML = html;
+}
+
+// Render a level of the folder tree
+function renderFolderLevel(structure, path) {
+    let html = '';
+    
+    Object.keys(structure).sort().forEach(folderName => {
+        const folder = structure[folderName];
+        const fullPath = path ? `${path}/${folderName}` : folderName;
+        const isSelected = selectedFolders.has(fullPath);
+        const hasSubfolders = Object.keys(folder.subfolders).length > 0;
+        const fileCount = folder.files ? folder.files.length : 0;
+        
+        html += `
+            <div class="tree-item">
+                <div class="tree-folder ${isSelected ? 'active' : ''}" onclick="toggleFolder('${fullPath}')">
+                    <input type="checkbox" class="tree-checkbox" ${isSelected ? 'checked' : ''} 
+                           onchange="toggleFolderSelection('${fullPath}', this.checked)" onclick="event.stopPropagation()">
+                    <span class="tree-icon">${hasSubfolders ? '📁' : '📂'}</span>
+                    <span class="folder-name">${folderName}</span>
+                    <span class="file-count">(${fileCount})</span>
+                </div>
+        `;
+        
+        if (hasSubfolders) {
+            html += `
+                <div class="tree-children" id="children-${fullPath.replace(/[^a-zA-Z0-9]/g, '-')}">
+                    ${renderFolderLevel(folder.subfolders, fullPath)}
+                </div>
+            `;
+        }
+        
+        html += '</div>';
+    });
+    
+    return html;
+}
+
+// Toggle folder expansion
+function toggleFolder(path) {
+    const sanitizedPath = path.replace(/[^a-zA-Z0-9]/g, '-');
+    const childrenElement = document.getElementById(`children-${sanitizedPath}`);
+    if (childrenElement) {
+        childrenElement.classList.toggle('expanded');
     }
 }
 
-// Filter and sort files
-function filterFiles() {
-    const searchTerm = elementsCache.searchInput.value.toLowerCase();
-    const showIncomplete = elementsCache.showIncomplete.checked;
-    const showCompleted = elementsCache.showCompleted.checked;
-    const sortBy = elementsCache.sortBy.value;
+// Toggle folder selection for filtering
+function toggleFolderSelection(path, checked) {
+    if (checked) {
+        selectedFolders.add(path);
+    } else {
+        selectedFolders.delete(path);
+    }
+    filterAndRenderFiles();
+}
+
+// Set filter type
+function setFilter(filterType) {
+    // Update button states
+    document.querySelectorAll('.view-toggle').forEach(btn => btn.classList.remove('active'));
+    document.getElementById('show' + filterType.charAt(0).toUpperCase() + filterType.slice(1))?.classList.add('active');
+    
+    filterAndRenderFiles();
+}
+
+// Filter and render files
+function filterAndRenderFiles() {
+    const searchTerm = elements.searchInput?.value.toLowerCase() || '';
+    const activeFilter = document.querySelector('.view-toggle.active')?.dataset.filter || 'all';
     
     filteredFiles = allFiles.filter(file => {
-        const matchesSearch = file.name.toLowerCase().includes(searchTerm) || 
-                             file.relativePath.toLowerCase().includes(searchTerm);
+        // Search filter
+        const matchesSearch = !searchTerm || 
+            file.name.toLowerCase().includes(searchTerm) || 
+            file.relativePath.toLowerCase().includes(searchTerm);
         
+        // Completion filter
         const isComplete = file.testCompleted && file.docCompleted;
-        const showFile = (showIncomplete && !isComplete) || (showCompleted && isComplete);
+        let matchesFilter = true;
         
-        return matchesSearch && showFile;
-    });
-    
-    // Sort files
-    filteredFiles.sort((a, b) => {
-        switch (sortBy) {
-            case 'name':
-                return a.name.localeCompare(b.name);
-            case 'path':
-                return a.relativePath.localeCompare(b.relativePath);
-            case 'status':
-                const aComplete = (a.testCompleted ? 1 : 0) + (a.docCompleted ? 1 : 0);
-                const bComplete = (b.testCompleted ? 1 : 0) + (b.docCompleted ? 1 : 0);
-                return bComplete - aComplete;
+        switch (activeFilter) {
+            case 'incomplete':
+                matchesFilter = !isComplete;
+                break;
+            case 'completed':
+                matchesFilter = isComplete;
+                break;
+            case 'all':
             default:
-                return 0;
+                matchesFilter = true;
+                break;
         }
+        
+        // Folder filter (if any folders are selected)
+        let matchesFolder = selectedFolders.size === 0; // Show all if no folders selected
+        if (selectedFolders.size > 0) {
+            selectedFolders.forEach(folderPath => {
+                if (file.directory.startsWith(folderPath) || file.directory === folderPath) {
+                    matchesFolder = true;
+                }
+            });
+        }
+        
+        return matchesSearch && matchesFilter && matchesFolder;
     });
     
-    renderFiles();
+    renderFileTree();
 }
 
-// Render files in the grid
-function renderFiles() {
+// Render file tree in main content
+function renderFileTree() {
+    if (!elements.fileTreeContainer) return;
+    
     if (filteredFiles.length === 0) {
-        elementsCache.filesGrid.innerHTML = '<div class="no-results">No files match your criteria</div>';
+        elements.fileTreeContainer.innerHTML = `
+            <div class="no-results">
+                <h3>No files found</h3>
+                <p>Try adjusting your search criteria or folder selection.</p>
+            </div>
+        `;
         return;
     }
     
-    const html = filteredFiles.map(file => `
-        <div class="file-item" data-file-id="${file.id}">
-            <div class="file-info">
-                <div class="file-name">${file.name}</div>
-                <div class="file-path">${file.relativePath}</div>
-                ${file.notes ? `<div class="file-notes">${file.notes}</div>` : ''}
-            </div>
-            <div class="file-status">
-                <span class="status-badge ${file.testCompleted ? 'completed' : 'pending'}">
-                    ${file.testCompleted ? '✅ Test' : '⏳ Test'}
-                </span>
-                <span class="status-badge ${file.docCompleted ? 'completed' : 'pending'}">
-                    ${file.docCompleted ? '✅ Doc' : '⏳ Doc'}
-                </span>
-                <button class="edit-btn" onclick="openFileModal('${file.id}')">Edit</button>
-            </div>
-        </div>
-    `).join('');
+    // Group files by directory
+    const groupedFiles = {};
+    filteredFiles.forEach(file => {
+        if (!groupedFiles[file.directory]) {
+            groupedFiles[file.directory] = [];
+        }
+        groupedFiles[file.directory].push(file);
+    });
     
-    elementsCache.filesGrid.innerHTML = html;
+    let html = '';
+    Object.keys(groupedFiles).sort().forEach(directory => {
+        const files = groupedFiles[directory];
+        html += `
+            <div class="directory-group">
+                <div class="directory-header" onclick="toggleDirectory('${directory}')">
+                    <span class="directory-icon">📁</span>
+                    <span class="directory-name">${directory || 'Root'}</span>
+                    <span class="file-count">(${files.length} files)</span>
+                    <span class="expand-icon">▼</span>
+                </div>
+                <div class="directory-files expanded" id="dir-${directory.replace(/[^a-zA-Z0-9]/g, '-')}">
+                    ${files.map(file => renderFileItem(file)).join('')}
+                </div>
+            </div>
+        `;
+    });
+    
+    elements.fileTreeContainer.innerHTML = html;
 }
 
-// Open file modal for editing
+// Render individual file item
+function renderFileItem(file) {
+    const completionPercentage = ((file.testCompleted ? 50 : 0) + (file.docCompleted ? 50 : 0));
+    
+    return `
+        <div class="file-item" onclick="openFileModal('${file.id}')">
+            <div class="file-icon">☕</div>
+            <div class="file-info">
+                <div class="file-name">${file.name}</div>
+                <div class="file-details">
+                    <span class="test-status ${file.testCompleted ? 'completed' : 'pending'}">
+                        ${file.testCompleted ? '✅' : '⏳'} Test
+                        ${file.autoDetectedTest ? '(auto)' : '(manual)'}
+                    </span>
+                    <span class="doc-status ${file.docCompleted ? 'completed' : 'pending'}">
+                        ${file.docCompleted ? '✅' : '⏳'} Doc
+                        ${file.autoDetectedDoc ? '(auto)' : '(manual)'}
+                    </span>
+                </div>
+                ${file.notes ? `<div class="file-notes">${file.notes}</div>` : ''}
+            </div>
+            <div class="completion-indicator">
+                <div class="completion-bar">
+                    <div class="completion-fill" style="width: ${completionPercentage}%"></div>
+                </div>
+                <div class="completion-text">${completionPercentage}%</div>
+            </div>
+        </div>
+    `;
+}
+
+// Toggle directory expansion
+function toggleDirectory(directory) {
+    const sanitizedDir = directory.replace(/[^a-zA-Z0-9]/g, '-');
+    const dirElement = document.getElementById(`dir-${sanitizedDir}`);
+    if (dirElement) {
+        dirElement.classList.toggle('expanded');
+        
+        // Update expand icon
+        const header = dirElement.previousElementSibling;
+        const icon = header.querySelector('.expand-icon');
+        icon.textContent = dirElement.classList.contains('expanded') ? '▼' : '▶';
+    }
+}
+
+// Open file modal
 function openFileModal(fileId) {
     const file = allFiles.find(f => f.id === fileId);
     if (!file) return;
     
     currentEditingFile = file;
     
-    elementsCache.modalTitle.textContent = file.name;
-    elementsCache.modalPath.textContent = file.relativePath;
-    elementsCache.modalDirectory.textContent = file.directory;
-    elementsCache.modalTestCompleted.checked = file.testCompleted;
-    elementsCache.modalDocCompleted.checked = file.docCompleted;
-    elementsCache.modalNotes.value = file.notes || '';
+    // Populate modal fields
+    elements.modalTitle.textContent = `File Details: ${file.name}`;
+    elements.modalFileName.textContent = file.name;
+    elements.modalPath.textContent = file.relativePath;
+    elements.modalDirectory.textContent = file.directory || 'Root';
     
-    // Show auto-detection indicators
-    const testAutoDetected = document.getElementById('testAutoDetected');
-    const docAutoDetected = document.getElementById('docAutoDetected');
+    // Auto-detection results
+    elements.modalTestFile.textContent = file.testFile || 'Not found';
+    elements.modalTestStatus.textContent = file.autoDetectedTest ? '✅ Found' : '❌ Not found';
+    elements.modalTestStatus.className = `detection-status ${file.autoDetectedTest ? 'found' : 'not-found'}`;
     
-    if (file.autoDetectedTest) {
-        testAutoDetected.style.display = 'block';
-        testAutoDetected.textContent = `(Auto-detected: ${file.testFile})`;
-    } else {
-        testAutoDetected.style.display = 'none';
-    }
+    elements.modalDocFile.textContent = file.docFile || 'Not found';
+    elements.modalDocStatus.textContent = file.autoDetectedDoc ? '✅ Found' : '❌ Not found';
+    elements.modalDocStatus.className = `detection-status ${file.autoDetectedDoc ? 'found' : 'not-found'}`;
     
-    if (file.autoDetectedDoc) {
-        docAutoDetected.style.display = 'block';
-        docAutoDetected.textContent = `(Auto-detected: ${file.docFile})`;
-    } else {
-        docAutoDetected.style.display = 'none';
-    }
+    // Manual status
+    elements.modalTestCompleted.checked = file.testCompleted;
+    elements.modalDocCompleted.checked = file.docCompleted;
+    elements.modalNotes.value = file.notes || '';
     
-    elementsCache.fileModal.style.display = 'block';
+    elements.fileModal.style.display = 'block';
 }
 
 // Close modal
 function closeModal() {
-    elementsCache.fileModal.style.display = 'none';
+    elements.fileModal.style.display = 'none';
     currentEditingFile = null;
 }
 
 // Save file changes
-async function saveFileChanges() {
+function saveFileChanges() {
     if (!currentEditingFile) return;
     
-    const updatedFile = {
-        testCompleted: elementsCache.modalTestCompleted.checked,
-        docCompleted: elementsCache.modalDocCompleted.checked,
-        notes: elementsCache.modalNotes.value
-    };
+    // Update file object
+    currentEditingFile.testCompleted = elements.modalTestCompleted.checked;
+    currentEditingFile.docCompleted = elements.modalDocCompleted.checked;
+    currentEditingFile.notes = elements.modalNotes.value;
+    currentEditingFile.lastModified = new Date().toISOString();
     
-    try {
-        elementsCache.saveChanges.disabled = true;
-        elementsCache.saveChanges.textContent = 'Saving...';
-        
-        const response = await fetch(`${API_BASE}/files/${currentEditingFile.id}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(updatedFile)
-        });
-        
-        if (response.ok) {
-            await loadData(); // Refresh data
-            closeModal();
-            showSuccess('File updated successfully');
-        } else {
-            throw new Error('Failed to update file');
-        }
-        
-    } catch (error) {
-        console.error('Error saving changes:', error);
-        showError('Failed to save changes');
-    } finally {
-        elementsCache.saveChanges.disabled = false;
-        elementsCache.saveChanges.textContent = 'Save Changes';
+    // Save to localStorage
+    saveToLocalStorage();
+    
+    // Update UI
+    updateStatistics();
+    filterAndRenderFiles();
+    closeModal();
+    
+    showSuccess('File updated successfully!');
+}
+
+// Update statistics
+function updateStatistics() {
+    const totalFiles = allFiles.length;
+    const completedTests = allFiles.filter(f => f.testCompleted).length;
+    const completedDocs = allFiles.filter(f => f.docCompleted).length;
+    
+    elements.totalFiles.textContent = totalFiles;
+    elements.completedTests.textContent = completedTests;
+    elements.completedDocs.textContent = completedDocs;
+    
+    const testProgress = totalFiles > 0 ? (completedTests / totalFiles * 100) : 0;
+    const docProgress = totalFiles > 0 ? (completedDocs / totalFiles * 100) : 0;
+    
+    elements.testProgress.style.width = `${testProgress}%`;
+    elements.docProgress.style.width = `${docProgress}%`;
+}
+
+// Update UI visibility
+function updateUI() {
+    const hasFiles = allFiles.length > 0;
+    
+    if (elements.uploadSection) {
+        elements.uploadSection.style.display = hasFiles ? 'none' : 'block';
+    }
+    if (elements.statsControls) {
+        elements.statsControls.style.display = hasFiles ? 'block' : 'none';
+    }
+    if (elements.fileExplorer) {
+        elements.fileExplorer.style.display = hasFiles ? 'block' : 'none';
+    }
+    if (elements.welcomeMessage) {
+        elements.welcomeMessage.style.display = hasFiles ? 'none' : 'block';
+    }
+    
+    if (hasFiles) {
+        elements.uploadSection?.classList.add('has-files');
     }
 }
 
-// Show success message
+// Local storage functions
+function saveToLocalStorage() {
+    try {
+        localStorage.setItem('javaTestTracker', JSON.stringify({
+            files: allFiles,
+            lastSaved: new Date().toISOString()
+        }));
+    } catch (error) {
+        console.error('Error saving to localStorage:', error);
+        showError('Failed to save data locally');
+    }
+}
+
+function loadFromLocalStorage() {
+    try {
+        const data = localStorage.getItem('javaTestTracker');
+        if (data) {
+            const parsed = JSON.parse(data);
+            allFiles = parsed.files || [];
+            buildFolderStructure();
+            updateStatistics();
+        }
+    } catch (error) {
+        console.error('Error loading from localStorage:', error);
+        allFiles = [];
+    }
+}
+
+// Data management functions
+function exportData() {
+    const data = {
+        files: allFiles,
+        exportDate: new Date().toISOString(),
+        version: '1.0'
+    };
+    
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `java-test-tracker-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    showSuccess('Data exported successfully!');
+}
+
+function importData(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const data = JSON.parse(e.target.result);
+            
+            if (data.files && Array.isArray(data.files)) {
+                allFiles = data.files;
+                saveToLocalStorage();
+                buildFolderStructure();
+                updateStatistics();
+                updateUI();
+                filterAndRenderFiles();
+                showSuccess(`Imported ${allFiles.length} files successfully!`);
+            } else {
+                throw new Error('Invalid file format');
+            }
+        } catch (error) {
+            console.error('Error importing data:', error);
+            showError('Failed to import data: Invalid file format');
+        }
+    };
+    reader.readAsText(file);
+    
+    // Reset file input
+    event.target.value = '';
+}
+
+function clearAllData() {
+    if (confirm('Are you sure you want to clear all data? This action cannot be undone.')) {
+        allFiles = [];
+        folderStructure = {};
+        selectedFolders.clear();
+        
+        localStorage.removeItem('javaTestTracker');
+        
+        buildFolderStructure();
+        updateStatistics();
+        updateUI();
+        filterAndRenderFiles();
+        
+        showSuccess('All data cleared successfully!');
+    }
+}
+
+// Utility functions
 function showSuccess(message) {
-    // Create a temporary success message
-    const successDiv = document.createElement('div');
-    successDiv.className = 'success-message';
-    successDiv.textContent = message;
-    successDiv.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background: #4CAF50;
-        color: white;
-        padding: 15px 20px;
-        border-radius: 5px;
-        z-index: 1001;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    `;
-    
-    document.body.appendChild(successDiv);
-    
-    setTimeout(() => {
-        successDiv.remove();
-    }, 3000);
+    showNotification(message, 'success');
 }
 
-// Show error message
 function showError(message) {
-    // Create a temporary error message
-    const errorDiv = document.createElement('div');
-    errorDiv.className = 'error-message';
-    errorDiv.textContent = message;
-    errorDiv.style.cssText = `
+    showNotification(message, 'error');
+}
+
+function showNotification(message, type) {
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    notification.style.cssText = `
         position: fixed;
         top: 20px;
         right: 20px;
-        background: #f44336;
-        color: white;
         padding: 15px 20px;
-        border-radius: 5px;
+        border-radius: 8px;
+        color: white;
         z-index: 1001;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        font-weight: 500;
+        background: ${type === 'success' ? '#4CAF50' : '#f44336'};
+        animation: slideIn 0.3s ease-out;
     `;
     
-    document.body.appendChild(errorDiv);
+    // Add slide-in animation
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+    `;
+    document.head.appendChild(style);
+    
+    document.body.appendChild(notification);
     
     setTimeout(() => {
-        errorDiv.remove();
-    }, 5000);
+        notification.style.animation = 'slideIn 0.3s ease-out reverse';
+        setTimeout(() => {
+            notification.remove();
+            style.remove();
+        }, 300);
+    }, type === 'error' ? 5000 : 3000);
 }
 
-// Auto-refresh data every 30 seconds
-setInterval(async () => {
-    await loadData();
-}, 30000);
+// Make functions globally available for onclick handlers
+window.toggleFolder = toggleFolder;
+window.toggleFolderSelection = toggleFolderSelection;
+window.toggleDirectory = toggleDirectory;
+window.openFileModal = openFileModal;

@@ -6,6 +6,7 @@ let folderStructure = {};
 let currentEditingFile = null;
 let selectedFolders = new Set();
 let isProcessing = false;
+let developerAssignments = {}; // Store developer assignments per folder path
 
 // Performance optimization constants
 const BATCH_SIZE = 100; // Process files in batches
@@ -20,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
     cacheElements();
     setupEventListeners();
     loadFromLocalStorage();
+    loadDeveloperAssignments();
     updateUI();
 });
 
@@ -71,6 +73,12 @@ function cacheElements() {
     elements.importData = document.getElementById('importData');
     elements.clearData = document.getElementById('clearData');
     
+    // Tree controls
+    elements.expandAll = document.getElementById('expandAll');
+    elements.collapseAll = document.getElementById('collapseAll');
+    elements.selectAll = document.getElementById('selectAll');
+    elements.deselectAll = document.getElementById('deselectAll');
+    
     // Progress modal
     elements.progressModal = document.getElementById('progressModal');
     elements.progressFill = document.getElementById('progressFill');
@@ -101,6 +109,12 @@ function setupEventListeners() {
     elements.exportData?.addEventListener('click', exportData);
     elements.importData?.addEventListener('change', importData);
     elements.clearData?.addEventListener('click', clearAllData);
+    
+    // Tree controls
+    elements.expandAll?.addEventListener('click', expandAllFolders);
+    elements.collapseAll?.addEventListener('click', collapseAllFolders);
+    elements.selectAll?.addEventListener('click', selectAllFolders);
+    elements.deselectAll?.addEventListener('click', deselectAllFolders);
     
     // Close modal when clicking outside
     window.addEventListener('click', (e) => {
@@ -352,7 +366,7 @@ function renderFolderTree() {
 }
 
 // Render a level of the folder tree
-function renderFolderLevel(structure, path) {
+function renderFolderLevel(structure, path, level = 0) {
     let html = '';
     
     Object.keys(structure).sort().forEach(folderName => {
@@ -361,22 +375,34 @@ function renderFolderLevel(structure, path) {
         const isSelected = selectedFolders.has(fullPath);
         const hasSubfolders = Object.keys(folder.subfolders).length > 0;
         const fileCount = folder.files ? folder.files.length : 0;
+        const developerId = `dev-${fullPath.replace(/[^a-zA-Z0-9]/g, '-')}`;
+        const savedDeveloper = developerAssignments[fullPath] || '';
         
         html += `
             <div class="tree-item">
-                <div class="tree-folder ${isSelected ? 'active' : ''}" onclick="toggleFolder('${fullPath}')">
-                    <input type="checkbox" class="tree-checkbox" ${isSelected ? 'checked' : ''} 
-                           onchange="toggleFolderSelection('${fullPath}', this.checked)" onclick="event.stopPropagation()">
-                    <span class="tree-icon">${hasSubfolders ? '📁' : '📂'}</span>
-                    <span class="folder-name">${folderName}</span>
-                    <span class="file-count">(${fileCount})</span>
+                <div class="tree-folder tree-level-${level} ${isSelected ? 'active' : ''}" 
+                     style="--indent-level: ${level}; --parent-indent: ${level}" 
+                     onclick="toggleFolder('${fullPath}')">
+                    <div class="tree-folder-content">
+                        <input type="checkbox" class="tree-checkbox" ${isSelected ? 'checked' : ''} 
+                               onchange="toggleFolderSelection('${fullPath}', this.checked)" onclick="event.stopPropagation()">
+                        <span class="tree-icon">${hasSubfolders ? '📁' : '📂'}</span>
+                        <span class="folder-name">${folderName}</span>
+                        <span class="file-count">(${fileCount})</span>
+                        <input type="text" class="developer-input" id="${developerId}" 
+                               placeholder="Developer" value="${savedDeveloper}"
+                               onchange="updateDeveloperAssignment('${fullPath}', this.value)"
+                               onclick="event.stopPropagation()"
+                               title="Assign developer to this folder">
+                    </div>
                 </div>
         `;
         
         if (hasSubfolders) {
             html += `
-                <div class="tree-children" id="children-${fullPath.replace(/[^a-zA-Z0-9]/g, '-')}">
-                    ${renderFolderLevel(folder.subfolders, fullPath)}
+                <div class="tree-children" id="children-${fullPath.replace(/[^a-zA-Z0-9]/g, '-')}"
+                     style="--parent-indent: ${level + 1}">
+                    ${renderFolderLevel(folder.subfolders, fullPath, level + 1)}
                 </div>
             `;
         }
@@ -775,8 +801,9 @@ function loadFromLocalStorage() {
 function exportData() {
     const data = {
         files: allFiles,
+        developerAssignments: developerAssignments,
         exportDate: new Date().toISOString(),
-        version: '1.0'
+        version: '1.1'
     };
     
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -803,6 +830,13 @@ function importData(event) {
             
             if (data.files && Array.isArray(data.files)) {
                 allFiles = data.files;
+                
+                // Import developer assignments if available
+                if (data.developerAssignments && typeof data.developerAssignments === 'object') {
+                    developerAssignments = data.developerAssignments;
+                    saveDeveloperAssignments();
+                }
+                
                 saveToLocalStorage();
                 buildFolderStructureOptimized();
                 updateStatistics();
@@ -828,8 +862,10 @@ function clearAllData() {
         allFiles = [];
         folderStructure = {};
         selectedFolders.clear();
+        developerAssignments = {};
         
         localStorage.removeItem('javaTestTracker');
+        localStorage.removeItem('javaDeveloperAssignments');
         
         buildFolderStructureOptimized();
         updateStatistics();
@@ -964,9 +1000,113 @@ function showNotification(message, type) {
     }, type === 'error' ? 5000 : 3000);
 }
 
+// Tree control functions
+function expandAllFolders() {
+    const allChildren = document.querySelectorAll('.tree-children');
+    allChildren.forEach(child => {
+        child.classList.add('expanded');
+    });
+}
+
+function collapseAllFolders() {
+    const allChildren = document.querySelectorAll('.tree-children');
+    allChildren.forEach(child => {
+        child.classList.remove('expanded');
+    });
+}
+
+function selectAllFolders() {
+    // Get all folder paths from the folder structure
+    const allPaths = getAllFolderPaths(folderStructure, '');
+    allPaths.forEach(path => {
+        selectedFolders.add(path);
+    });
+    
+    // Update checkboxes
+    const allCheckboxes = document.querySelectorAll('.tree-checkbox');
+    allCheckboxes.forEach(checkbox => {
+        checkbox.checked = true;
+    });
+    
+    // Update active states
+    const allFolders = document.querySelectorAll('.tree-folder');
+    allFolders.forEach(folder => {
+        folder.classList.add('active');
+    });
+    
+    filterAndRenderFiles();
+}
+
+function deselectAllFolders() {
+    selectedFolders.clear();
+    
+    // Update checkboxes
+    const allCheckboxes = document.querySelectorAll('.tree-checkbox');
+    allCheckboxes.forEach(checkbox => {
+        checkbox.checked = false;
+    });
+    
+    // Update active states
+    const allFolders = document.querySelectorAll('.tree-folder');
+    allFolders.forEach(folder => {
+        folder.classList.remove('active');
+    });
+    
+    filterAndRenderFiles();
+}
+
+// Helper function to get all folder paths recursively
+function getAllFolderPaths(structure, parentPath) {
+    let paths = [];
+    
+    Object.keys(structure).forEach(folderName => {
+        const fullPath = parentPath ? `${parentPath}/${folderName}` : folderName;
+        paths.push(fullPath);
+        
+        // Recursively get subfolders
+        const subPaths = getAllFolderPaths(structure[folderName].subfolders, fullPath);
+        paths = paths.concat(subPaths);
+    });
+    
+    return paths;
+}
+
+// Developer assignment management
+function updateDeveloperAssignment(folderPath, developerName) {
+    if (developerName.trim()) {
+        developerAssignments[folderPath] = developerName.trim();
+    } else {
+        delete developerAssignments[folderPath];
+    }
+    
+    // Save to localStorage
+    saveDeveloperAssignments();
+}
+
+function saveDeveloperAssignments() {
+    try {
+        localStorage.setItem('javaDeveloperAssignments', JSON.stringify(developerAssignments));
+    } catch (error) {
+        console.error('Error saving developer assignments:', error);
+    }
+}
+
+function loadDeveloperAssignments() {
+    try {
+        const data = localStorage.getItem('javaDeveloperAssignments');
+        if (data) {
+            developerAssignments = JSON.parse(data);
+        }
+    } catch (error) {
+        console.error('Error loading developer assignments:', error);
+        developerAssignments = {};
+    }
+}
+
 // Make functions globally available for onclick handlers
 window.toggleFolder = toggleFolder;
 window.toggleFolderSelection = toggleFolderSelection;
 window.toggleDirectory = toggleDirectory;
 window.openFileModal = openFileModal;
 window.loadMoreFiles = loadMoreFiles;
+window.updateDeveloperAssignment = updateDeveloperAssignment;

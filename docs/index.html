@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Java Unit Test Tracker 2.0</title>
-    <link rel="stylesheet" href="public/styles.css">
+    <title>Java Unit Test Tracker</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="main-layout">
@@ -13,6 +13,18 @@
             <div class="sidebar-header">
                 <h2>📁 Project Explorer</h2>
                 <p>Navigate through your Java project structure</p>
+            </div>
+            
+            <!-- Tree Controls -->
+            <div class="tree-controls">
+                <div class="tree-actions">
+                    <button id="expandAll" class="btn btn-sm">📂 Expand All</button>
+                    <button id="collapseAll" class="btn btn-sm">📁 Collapse All</button>
+                </div>
+                <div class="bulk-selection">
+                    <button id="selectAll" class="btn btn-sm">☑️ Select All</button>
+                    <button id="deselectAll" class="btn btn-sm">☐ Deselect All</button>
+                </div>
             </div>
             
             <div class="folder-tree" id="folderTree">
@@ -199,6 +211,6 @@
         </div>
     </div>
 
-    <script src="public/script_optimized.js"></script>
+    <script src="script_optimized.js"></script>
 </body>
 </html>

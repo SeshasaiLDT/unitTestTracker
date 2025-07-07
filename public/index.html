@@ -179,6 +179,26 @@
         </div>
     </div>
 
-    <script src="script_new.js"></script>
+    <!-- Progress Modal -->
+    <div class="modal" id="progressModal" style="display: none;">
+        <div class="modal-content progress-modal">
+            <div class="progress-header">
+                <h3 id="progressTitle">Processing Files</h3>
+                <div class="progress-status" id="progressStatus">Starting...</div>
+            </div>
+            <div class="progress-container">
+                <div class="progress-bar-main">
+                    <div class="progress-fill-main" id="progressFill" style="width: 0%"></div>
+                </div>
+                <div class="progress-percentage" id="progressPercentage">0%</div>
+            </div>
+            <div class="progress-details">
+                <div class="progress-message" id="progressMessage">Preparing to process files...</div>
+                <div class="progress-stats" id="progressStats"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script_optimized.js"></script>
 </body>
 </html>

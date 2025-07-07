@@ -70,6 +70,14 @@ function cacheElements() {
     elements.exportData = document.getElementById('exportData');
     elements.importData = document.getElementById('importData');
     elements.clearData = document.getElementById('clearData');
+    
+    // Progress modal
+    elements.progressModal = document.getElementById('progressModal');
+    elements.progressFill = document.getElementById('progressFill');
+    elements.progressPercentage = document.getElementById('progressPercentage');
+    elements.progressStatus = document.getElementById('progressStatus');
+    elements.progressMessage = document.getElementById('progressMessage');
+    elements.progressStats = document.getElementById('progressStats');
 }
 
 // Setup event listeners
@@ -140,27 +148,29 @@ async function handleFileUpload(event) {
 // Optimized file processing with batching and progress updates
 async function processFilesOptimized(fileList) {
     isProcessing = true;
-    elements.loading.style.display = 'block';
+    showProgressModal();
+    const startTime = Date.now();
     
     try {
         const javaFiles = fileList.filter(file => file.name.endsWith('.java'));
         
         if (javaFiles.length === 0) {
+            hideProgressModal();
             alert('No Java files found in the selected folder.');
             return;
         }
         
         // Show progress information
-        updateLoadingMessage(`Found ${javaFiles.length} Java files. Processing...`);
+        updateProgress(0, `Found ${javaFiles.length} Java files. Starting processing...`, 'Initializing...');
         
         // Create lookup maps for faster file detection (O(1) instead of O(n))
         const testFileMap = new Map();
         const docFileMap = new Map();
         
-        updateLoadingMessage('Building file index...');
+        updateProgress(5, 'Building file index for faster detection...', 'Creating lookup maps...');
         
         // Build lookup maps for test and doc files
-        fileList.forEach(file => {
+        fileList.forEach((file, index) => {
             const path = file.webkitRelativePath || file.name;
             const fileName = file.name;
             
@@ -173,9 +183,15 @@ async function processFilesOptimized(fileList) {
                 docFileMap.set(baseFileName, file);
                 docFileMap.set(path.replace('.pdf', '.java'), file);
             }
+            
+            // Update progress during index building for large file lists
+            if (fileList.length > 10000 && index % 1000 === 0) {
+                const indexProgress = 5 + (index / fileList.length) * 10;
+                updateProgress(indexProgress, `Building index... ${index}/${fileList.length}`, 'Processing file mappings...');
+            }
         });
         
-        updateLoadingMessage('Processing Java files in batches...');
+        updateProgress(15, 'Processing Java files in optimized batches...', 'Starting batch processing...');
         
         // Process files in batches to prevent UI blocking
         const processedFiles = [];
@@ -184,17 +200,30 @@ async function processFilesOptimized(fileList) {
         for (let i = 0; i < javaFiles.length; i += BATCH_SIZE) {
             const batch = javaFiles.slice(i, i + BATCH_SIZE);
             const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
+            const batchProgress = 15 + ((currentBatch - 1) / totalBatches) * 60; // 15% to 75%
             
-            updateLoadingMessage(`Processing batch ${currentBatch}/${totalBatches} (${i + 1}-${Math.min(i + BATCH_SIZE, javaFiles.length)} of ${javaFiles.length})`);
+            // Calculate time estimates
+            const processedSoFar = i;
+            const elapsed = Date.now() - startTime;
+            const timePerFile = processedSoFar > 0 ? elapsed / processedSoFar : 0;
+            const remaining = javaFiles.length - processedSoFar;
+            const estimatedTimeRemaining = timePerFile * remaining;
+            
+            updateProgress(
+                batchProgress, 
+                `Processing batch ${currentBatch}/${totalBatches}`,
+                `Files ${i + 1}-${Math.min(i + BATCH_SIZE, javaFiles.length)} of ${javaFiles.length}`,
+                estimatedTimeRemaining > 0 ? `Estimated time remaining: ${formatTime(estimatedTimeRemaining)}` : ''
+            );
             
             const batchResults = batch.map(file => processIndividualFile(file, testFileMap, docFileMap));
             processedFiles.push(...batchResults);
             
             // Allow UI to update between batches
-            await new Promise(resolve => setTimeout(resolve, 10));
+            await new Promise(resolve => setTimeout(resolve, 20));
         }
         
-        updateLoadingMessage('Merging with existing files...');
+        updateProgress(80, 'Merging with existing files...', 'Checking for duplicates...');
         
         // Merge with existing files (avoid duplicates)
         const existingPaths = new Set(allFiles.map(f => f.relativePath));
@@ -202,20 +231,28 @@ async function processFilesOptimized(fileList) {
         
         allFiles = [...allFiles, ...newFiles];
         
-        updateLoadingMessage('Saving to local storage...');
+        updateProgress(85, 'Saving progress to local storage...', 'Persisting data...');
         
         // Save to localStorage
         saveToLocalStorage();
         
-        updateLoadingMessage('Building folder structure...');
+        updateProgress(90, 'Building folder structure...', 'Organizing files into hierarchy...');
         
         // Update UI
         await buildFolderStructureOptimized();
         updateStatistics();
         updateUI();
+        
+        updateProgress(95, 'Rendering file tree...', 'Preparing display...');
         await filterAndRenderFilesOptimized();
         
-        showSuccess(`Successfully processed ${newFiles.length} new Java files out of ${javaFiles.length} total!`);
+        updateProgress(100, 'Complete!', `Successfully processed ${newFiles.length} new files!`);
+        
+        // Hide progress modal after a brief delay
+        setTimeout(() => {
+            hideProgressModal();
+            showSuccess(`Successfully processed ${newFiles.length} new Java files out of ${javaFiles.length} total!`);
+        }, 1000);
         
     } catch (error) {
         console.error('Error processing files:', error);
@@ -801,6 +838,82 @@ function clearAllData() {
         
         showSuccess('All data cleared successfully!');
     }
+}
+
+// Progress Modal Functions
+function showProgressModal() {
+    const progressModal = document.getElementById('progressModal');
+    if (progressModal) {
+        progressModal.style.display = 'block';
+        // Reset progress state
+        updateProgress(0, 'Starting...', 'Initializing file processing...');
+    }
+}
+
+function hideProgressModal() {
+    const progressModal = document.getElementById('progressModal');
+    if (progressModal) {
+        setTimeout(() => {
+            progressModal.style.display = 'none';
+        }, 1000); // Show completion for 1 second before hiding
+    }
+}
+
+function updateProgress(percentage, status, message, stats = '') {
+    const progressFill = document.getElementById('progressFill');
+    const progressPercentage = document.getElementById('progressPercentage');
+    const progressStatus = document.getElementById('progressStatus');
+    const progressMessage = document.getElementById('progressMessage');
+    const progressStats = document.getElementById('progressStats');
+    
+    if (progressFill) {
+        progressFill.style.width = `${Math.min(100, Math.max(0, percentage))}%`;
+    }
+    
+    if (progressPercentage) {
+        progressPercentage.textContent = `${Math.round(percentage)}%`;
+    }
+    
+    if (progressStatus) {
+        progressStatus.textContent = status;
+    }
+    
+    if (progressMessage) {
+        progressMessage.textContent = message;
+    }
+    
+    if (progressStats && stats) {
+        progressStats.textContent = stats;
+    }
+    
+    // Add completion styling when done
+    if (percentage >= 100) {
+        if (progressStatus) {
+            progressStatus.style.color = '#28a745';
+        }
+        if (progressMessage) {
+            progressMessage.style.color = '#28a745';
+        }
+    }
+}
+
+// Helper function to format time
+function formatTime(milliseconds) {
+    if (milliseconds < 1000) return 'less than 1 second';
+    
+    const seconds = Math.floor(milliseconds / 1000);
+    if (seconds < 60) return `${seconds} seconds`;
+    
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    
+    if (minutes < 60) {
+        return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes} minutes`;
+    }
+    
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return `${hours}h ${remainingMinutes}m`;
 }
 
 // Utility functions

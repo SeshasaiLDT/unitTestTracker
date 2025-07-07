@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Java Unit Test Tracker</title>
-    <link rel="stylesheet" href="public/styles.css">
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="main-layout">
@@ -13,18 +13,6 @@
             <div class="sidebar-header">
                 <h2>📁 Project Explorer</h2>
                 <p>Navigate through your Java project structure</p>
-            </div>
-            
-            <!-- Tree Controls -->
-            <div class="tree-controls">
-                <div class="tree-actions">
-                    <button id="expandAll" class="btn btn-sm">📂 Expand All</button>
-                    <button id="collapseAll" class="btn btn-sm">📁 Collapse All</button>
-                </div>
-                <div class="bulk-selection">
-                    <button id="selectAll" class="btn btn-sm">☑️ Select All</button>
-                    <button id="deselectAll" class="btn btn-sm">☐ Deselect All</button>
-                </div>
             </div>
             
             <div class="folder-tree" id="folderTree">
@@ -191,26 +179,6 @@
         </div>
     </div>
 
-    <!-- Progress Modal -->
-    <div class="modal" id="progressModal" style="display: none;">
-        <div class="modal-content progress-modal">
-            <div class="progress-header">
-                <h3 id="progressTitle">Processing Files</h3>
-                <div class="progress-status" id="progressStatus">Starting...</div>
-            </div>
-            <div class="progress-container">
-                <div class="progress-bar-main">
-                    <div class="progress-fill-main" id="progressFill" style="width: 0%"></div>
-                </div>
-                <div class="progress-percentage" id="progressPercentage">0%</div>
-            </div>
-            <div class="progress-details">
-                <div class="progress-message" id="progressMessage">Preparing to process files...</div>
-                <div class="progress-stats" id="progressStats"></div>
-            </div>
-        </div>
-    </div>
-
-    <script src="script_optimized.js"></script>
+    <script src="script.js"></script>
 </body>
 </html>

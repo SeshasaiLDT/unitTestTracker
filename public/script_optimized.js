@@ -103,9 +103,18 @@ function cacheElements() {
 
 // Setup event listeners
 function setupEventListeners() {
-    // File upload
-    elements.folderInput?.addEventListener('change', handleFolderUpload);
-    elements.fileInput?.addEventListener('change', handleFileUpload);
+    // File upload - with safety checks
+    if (elements.folderInput) {
+        elements.folderInput.addEventListener('change', handleFolderUpload);
+    } else {
+        console.error('Warning: folderInput element not found in the DOM');
+    }
+    
+    if (elements.fileInput) {
+        elements.fileInput.addEventListener('change', handleFileUpload);
+    } else {
+        console.error('Warning: fileInput element not found in the DOM');
+    }
     
     // Search and filtering (debounced for performance)
     elements.searchInput?.addEventListener('input', debounce(filterAndRenderFiles, 300));
@@ -157,7 +166,19 @@ async function handleFolderUpload(event) {
         return;
     }
     
-    const files = Array.from(event.target.files);
+    // Safety check to ensure the event and its target exist
+    if (!event || !event.target || !event.target.files) {
+        console.error('Invalid event object in handleFolderUpload', event);
+        alert('Error accessing files. Please try again.');
+        return;
+    }
+    
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) {
+        alert('No files selected. Please select a folder containing Java files.');
+        return;
+    }
+    
     await processFilesOptimized(files);
 }
 
@@ -168,7 +189,19 @@ async function handleFileUpload(event) {
         return;
     }
     
-    const files = Array.from(event.target.files);
+    // Safety check to ensure the event and its target exist
+    if (!event || !event.target || !event.target.files) {
+        console.error('Invalid event object in handleFileUpload', event);
+        alert('Error accessing files. Please try again.');
+        return;
+    }
+    
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) {
+        alert('No files selected. Please select Java files to process.');
+        return;
+    }
+    
     await processFilesOptimized(files);
 }
 
@@ -302,10 +335,27 @@ async function processFilesOptimized(fileList) {
         
     } catch (error) {
         console.error('Error processing files:', error);
-        showError('Error processing files: ' + error.message);
+        
+        // Hide the progress modal first
+        hideProgressModal();
+        
+        // Show a more detailed error message
+        let errorMessage = 'Error processing files: ' + (error.message || 'Unknown error');
+        if (error.stack) {
+            console.error('Stack trace:', error.stack);
+        }
+        
+        // Check for specific error types and provide more helpful messages
+        if (error.message && error.message.includes('Cannot read properties of undefined')) {
+            errorMessage = 'Error accessing file properties. Please try uploading the folder again.';
+        }
+        
+        showError(errorMessage);
     } finally {
         isProcessing = false;
-        elements.loading.style.display = 'none';
+        if (elements.loading) {
+            elements.loading.style.display = 'none';
+        }
     }
 }
 

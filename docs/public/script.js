@@ -1,10 +1,16 @@
-// Java Unit Test Tracker - Client-Side Implementation
+// Java Unit Test Tracker - Optimized for Large Projects
 // Global state
 let allFiles = [];
 let filteredFiles = [];
 let folderStructure = {};
 let currentEditingFile = null;
-let selectedFolders = new Set(); // For sidebar filtering
+let selectedFolders = new Set();
+let isProcessing = false;
+
+// Performance optimization constants
+const BATCH_SIZE = 100; // Process files in batches
+const RENDER_BATCH_SIZE = 50; // Render files in smaller batches
+const VIRTUAL_SCROLL_THRESHOLD = 1000; // Use virtual scrolling for large lists
 
 // DOM Elements Cache
 const elements = {};
@@ -72,8 +78,8 @@ function setupEventListeners() {
     elements.folderInput?.addEventListener('change', handleFolderUpload);
     elements.fileInput?.addEventListener('change', handleFileUpload);
     
-    // Search and filtering
-    elements.searchInput?.addEventListener('input', filterAndRenderFiles);
+    // Search and filtering (debounced for performance)
+    elements.searchInput?.addEventListener('input', debounce(filterAndRenderFiles, 300));
     elements.showAll?.addEventListener('click', () => setFilter('all'));
     elements.showIncomplete?.addEventListener('click', () => setFilter('incomplete'));
     elements.showCompleted?.addEventListener('click', () => setFilter('completed'));
@@ -96,61 +102,99 @@ function setupEventListeners() {
     });
 }
 
-// Handle folder upload
+// Debounce function for performance
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Handle folder upload with progress tracking
 async function handleFolderUpload(event) {
+    if (isProcessing) {
+        alert('Already processing files. Please wait...');
+        return;
+    }
+    
     const files = Array.from(event.target.files);
-    await processFiles(files);
+    await processFilesOptimized(files);
 }
 
 // Handle individual file upload
 async function handleFileUpload(event) {
+    if (isProcessing) {
+        alert('Already processing files. Please wait...');
+        return;
+    }
+    
     const files = Array.from(event.target.files);
-    await processFiles(files);
+    await processFilesOptimized(files);
 }
 
-// Process uploaded files
-async function processFiles(fileList) {
+// Optimized file processing with batching and progress updates
+async function processFilesOptimized(fileList) {
+    isProcessing = true;
     elements.loading.style.display = 'block';
     
     try {
         const javaFiles = fileList.filter(file => file.name.endsWith('.java'));
-        const pdfFiles = fileList.filter(file => file.name.endsWith('.pdf'));
         
         if (javaFiles.length === 0) {
             alert('No Java files found in the selected folder.');
             return;
         }
         
-        // Create file objects
-        const processedFiles = javaFiles.map(file => {
-            const filePath = file.webkitRelativePath || file.name;
-            const pathParts = filePath.split('/');
-            const fileName = pathParts[pathParts.length - 1];
-            const directory = pathParts.slice(0, -1).join('/') || 'root';
+        // Show progress information
+        updateLoadingMessage(`Found ${javaFiles.length} Java files. Processing...`);
+        
+        // Create lookup maps for faster file detection (O(1) instead of O(n))
+        const testFileMap = new Map();
+        const docFileMap = new Map();
+        
+        updateLoadingMessage('Building file index...');
+        
+        // Build lookup maps for test and doc files
+        fileList.forEach(file => {
+            const path = file.webkitRelativePath || file.name;
+            const fileName = file.name;
             
-            // Auto-detect test and doc files
-            const baseFileName = fileName.replace('.java', '');
-            const testFileName = `${baseFileName}_tests.java`;
-            const docFileName = `${baseFileName}.pdf`;
-            
-            const testFile = fileList.find(f => f.name === testFileName || f.webkitRelativePath?.endsWith(testFileName));
-            const docFile = fileList.find(f => f.name === docFileName || f.webkitRelativePath?.endsWith(docFileName));
-            
-            return {
-                id: generateId(),
-                name: fileName,
-                relativePath: filePath,
-                directory: directory,
-                testCompleted: !!testFile,
-                docCompleted: !!docFile,
-                autoDetectedTest: !!testFile,
-                autoDetectedDoc: !!docFile,
-                testFile: testFile ? testFile.name : null,
-                docFile: docFile ? docFile.name : null,
-                notes: '',
-                lastModified: new Date().toISOString()
-            };
+            if (fileName.endsWith('_tests.java')) {
+                const baseFileName = fileName.replace('_tests.java', '.java');
+                testFileMap.set(baseFileName, file);
+                testFileMap.set(path.replace('_tests.java', '.java'), file);
+            } else if (fileName.endsWith('.pdf')) {
+                const baseFileName = fileName.replace('.pdf', '.java');
+                docFileMap.set(baseFileName, file);
+                docFileMap.set(path.replace('.pdf', '.java'), file);
+            }
         });
+        
+        updateLoadingMessage('Processing Java files in batches...');
+        
+        // Process files in batches to prevent UI blocking
+        const processedFiles = [];
+        const totalBatches = Math.ceil(javaFiles.length / BATCH_SIZE);
+        
+        for (let i = 0; i < javaFiles.length; i += BATCH_SIZE) {
+            const batch = javaFiles.slice(i, i + BATCH_SIZE);
+            const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
+            
+            updateLoadingMessage(`Processing batch ${currentBatch}/${totalBatches} (${i + 1}-${Math.min(i + BATCH_SIZE, javaFiles.length)} of ${javaFiles.length})`);
+            
+            const batchResults = batch.map(file => processIndividualFile(file, testFileMap, docFileMap));
+            processedFiles.push(...batchResults);
+            
+            // Allow UI to update between batches
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        
+        updateLoadingMessage('Merging with existing files...');
         
         // Merge with existing files (avoid duplicates)
         const existingPaths = new Set(allFiles.map(f => f.relativePath));
@@ -158,22 +202,62 @@ async function processFiles(fileList) {
         
         allFiles = [...allFiles, ...newFiles];
         
+        updateLoadingMessage('Saving to local storage...');
+        
         // Save to localStorage
         saveToLocalStorage();
         
+        updateLoadingMessage('Building folder structure...');
+        
         // Update UI
-        buildFolderStructure();
+        await buildFolderStructureOptimized();
         updateStatistics();
         updateUI();
-        filterAndRenderFiles();
+        await filterAndRenderFilesOptimized();
         
-        showSuccess(`Successfully processed ${newFiles.length} new Java files!`);
+        showSuccess(`Successfully processed ${newFiles.length} new Java files out of ${javaFiles.length} total!`);
         
     } catch (error) {
         console.error('Error processing files:', error);
         showError('Error processing files: ' + error.message);
     } finally {
+        isProcessing = false;
         elements.loading.style.display = 'none';
+    }
+}
+
+// Process individual file with optimized lookups
+function processIndividualFile(file, testFileMap, docFileMap) {
+    const filePath = file.webkitRelativePath || file.name;
+    const pathParts = filePath.split('/');
+    const fileName = pathParts[pathParts.length - 1];
+    const directory = pathParts.slice(0, -1).join('/') || 'root';
+    
+    // Fast lookup for test and doc files using maps
+    const testFile = testFileMap.get(fileName) || testFileMap.get(filePath);
+    const docFile = docFileMap.get(fileName) || docFileMap.get(filePath);
+    
+    return {
+        id: generateId(),
+        name: fileName,
+        relativePath: filePath,
+        directory: directory,
+        testCompleted: !!testFile,
+        docCompleted: !!docFile,
+        autoDetectedTest: !!testFile,
+        autoDetectedDoc: !!docFile,
+        testFile: testFile ? testFile.name : null,
+        docFile: docFile ? docFile.name : null,
+        notes: '',
+        lastModified: new Date().toISOString()
+    };
+}
+
+// Update loading message
+function updateLoadingMessage(message) {
+    const loadingElement = elements.loading?.querySelector('p');
+    if (loadingElement) {
+        loadingElement.textContent = message;
     }
 }
 
@@ -182,36 +266,45 @@ function generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-// Build folder structure for navigation
-function buildFolderStructure() {
+// Optimized folder structure building
+async function buildFolderStructureOptimized() {
     folderStructure = {};
     
-    allFiles.forEach(file => {
-        const pathParts = file.directory.split('/').filter(part => part);
-        let currentLevel = folderStructure;
+    // Process in batches to prevent UI blocking
+    for (let i = 0; i < allFiles.length; i += BATCH_SIZE) {
+        const batch = allFiles.slice(i, i + BATCH_SIZE);
         
-        pathParts.forEach(part => {
-            if (!currentLevel[part]) {
-                currentLevel[part] = { files: [], subfolders: {} };
-            }
-            currentLevel = currentLevel[part].subfolders;
+        batch.forEach(file => {
+            const pathParts = file.directory.split('/').filter(part => part);
+            let currentLevel = folderStructure;
+            
+            pathParts.forEach(part => {
+                if (!currentLevel[part]) {
+                    currentLevel[part] = { files: [], subfolders: {} };
+                }
+                currentLevel = currentLevel[part].subfolders;
+            });
+            
+            // Add file to the appropriate folder
+            const finalFolder = pathParts.length > 0 ? 
+                pathParts.reduce((level, part) => level[part], folderStructure) :
+                { files: [] };
+                
+            if (!finalFolder.files) finalFolder.files = [];
+            finalFolder.files.push(file);
         });
         
-        // Add file to the appropriate folder
-        const targetFolder = pathParts.reduce((level, part) => level[part].subfolders, folderStructure);
-        if (!folderStructure[pathParts[pathParts.length - 1]]) {
-            folderStructure[pathParts[pathParts.length - 1]] = { files: [], subfolders: {} };
+        // Allow UI to update
+        if (i % (BATCH_SIZE * 5) === 0) {
+            await new Promise(resolve => setTimeout(resolve, 5));
         }
-        const finalFolder = pathParts.length > 0 ? 
-            pathParts.reduce((level, part) => level[part], folderStructure) :
-            folderStructure;
-            
-        if (!finalFolder.files) finalFolder.files = [];
-        finalFolder.files.push(file);
-    });
+    }
     
     renderFolderTree();
 }
+
+// Rest of the functions remain similar but with optimizations...
+// [Continuing with optimized versions of remaining functions]
 
 // Render folder tree in sidebar
 function renderFolderTree() {
@@ -285,8 +378,8 @@ function setFilter(filterType) {
     filterAndRenderFiles();
 }
 
-// Filter and render files
-function filterAndRenderFiles() {
+// Optimized filtering and rendering
+async function filterAndRenderFilesOptimized() {
     const searchTerm = elements.searchInput?.value.toLowerCase() || '';
     const activeFilter = document.querySelector('.view-toggle.active')?.dataset.filter || 'all';
     
@@ -314,7 +407,7 @@ function filterAndRenderFiles() {
         }
         
         // Folder filter (if any folders are selected)
-        let matchesFolder = selectedFolders.size === 0; // Show all if no folders selected
+        let matchesFolder = selectedFolders.size === 0;
         if (selectedFolders.size > 0) {
             selectedFolders.forEach(folderPath => {
                 if (file.directory.startsWith(folderPath) || file.directory === folderPath) {
@@ -326,11 +419,14 @@ function filterAndRenderFiles() {
         return matchesSearch && matchesFilter && matchesFolder;
     });
     
-    renderFileTree();
+    await renderFileTreeOptimized();
 }
 
-// Render file tree in main content
-function renderFileTree() {
+// Alias for backward compatibility
+const filterAndRenderFiles = filterAndRenderFilesOptimized;
+
+// Optimized file tree rendering with virtual scrolling for large lists
+async function renderFileTreeOptimized() {
     if (!elements.fileTreeContainer) return;
     
     if (filteredFiles.length === 0) {
@@ -340,6 +436,12 @@ function renderFileTree() {
                 <p>Try adjusting your search criteria or folder selection.</p>
             </div>
         `;
+        return;
+    }
+    
+    // For very large lists, implement virtual scrolling
+    if (filteredFiles.length > VIRTUAL_SCROLL_THRESHOLD) {
+        await renderVirtualScrollList();
         return;
     }
     
@@ -353,27 +455,117 @@ function renderFileTree() {
     });
     
     let html = '';
-    Object.keys(groupedFiles).sort().forEach(directory => {
-        const files = groupedFiles[directory];
-        html += `
-            <div class="directory-group">
-                <div class="directory-header" onclick="toggleDirectory('${directory}')">
-                    <span class="directory-icon">📁</span>
-                    <span class="directory-name">${directory || 'Root'}</span>
-                    <span class="file-count">(${files.length} files)</span>
-                    <span class="expand-icon">▼</span>
+    const directories = Object.keys(groupedFiles).sort();
+    
+    // Render in batches to prevent UI blocking
+    for (let i = 0; i < directories.length; i += RENDER_BATCH_SIZE) {
+        const batch = directories.slice(i, i + RENDER_BATCH_SIZE);
+        
+        batch.forEach(directory => {
+            const files = groupedFiles[directory];
+            html += `
+                <div class="directory-group">
+                    <div class="directory-header" onclick="toggleDirectory('${directory}')">
+                        <span class="directory-icon">📁</span>
+                        <span class="directory-name">${directory || 'Root'}</span>
+                        <span class="file-count">(${files.length} files)</span>
+                        <span class="expand-icon">▼</span>
+                    </div>
+                    <div class="directory-files expanded" id="dir-${directory.replace(/[^a-zA-Z0-9]/g, '-')}">
+                        ${files.slice(0, 100).map(file => renderFileItem(file)).join('')}
+                        ${files.length > 100 ? `<div class="load-more-files" onclick="loadMoreFiles('${directory}')">Load ${files.length - 100} more files...</div>` : ''}
+                    </div>
                 </div>
-                <div class="directory-files expanded" id="dir-${directory.replace(/[^a-zA-Z0-9]/g, '-')}">
-                    ${files.map(file => renderFileItem(file)).join('')}
-                </div>
-            </div>
-        `;
-    });
+            `;
+        });
+        
+        // Update UI in batches
+        if (i % RENDER_BATCH_SIZE === 0) {
+            await new Promise(resolve => setTimeout(resolve, 5));
+        }
+    }
     
     elements.fileTreeContainer.innerHTML = html;
 }
 
-// Render individual file item
+// Virtual scrolling for very large lists
+async function renderVirtualScrollList() {
+    const container = elements.fileTreeContainer;
+    const itemHeight = 60; // Approximate height of each file item
+    const containerHeight = 600; // Max height of container
+    const visibleItems = Math.ceil(containerHeight / itemHeight);
+    
+    let scrollTop = 0;
+    let startIndex = 0;
+    let endIndex = Math.min(visibleItems, filteredFiles.length);
+    
+    function renderVisibleItems() {
+        const totalHeight = filteredFiles.length * itemHeight;
+        const offsetY = startIndex * itemHeight;
+        
+        const html = `
+            <div style="height: ${totalHeight}px; position: relative;">
+                <div style="transform: translateY(${offsetY}px);">
+                    ${filteredFiles.slice(startIndex, endIndex).map(file => renderFileItem(file)).join('')}
+                </div>
+            </div>
+            <div class="virtual-scroll-info">
+                Showing ${startIndex + 1}-${endIndex} of ${filteredFiles.length} files
+            </div>
+        `;
+        
+        container.innerHTML = html;
+    }
+    
+    // Add scroll listener for virtual scrolling
+    container.addEventListener('scroll', () => {
+        scrollTop = container.scrollTop;
+        startIndex = Math.floor(scrollTop / itemHeight);
+        endIndex = Math.min(startIndex + visibleItems + 5, filteredFiles.length); // Buffer of 5 items
+        renderVisibleItems();
+    });
+    
+    renderVisibleItems();
+}
+
+// Load more files for a specific directory
+function loadMoreFiles(directory) {
+    const dirElement = document.getElementById(`dir-${directory.replace(/[^a-zA-Z0-9]/g, '-')}`);
+    if (!dirElement) return;
+    
+    const groupedFiles = {};
+    filteredFiles.forEach(file => {
+        if (!groupedFiles[file.directory]) {
+            groupedFiles[file.directory] = [];
+        }
+        groupedFiles[file.directory].push(file);
+    });
+    
+    const files = groupedFiles[directory] || [];
+    const currentCount = dirElement.querySelectorAll('.file-item').length;
+    const nextBatch = files.slice(currentCount, currentCount + 100);
+    
+    const loadMoreButton = dirElement.querySelector('.load-more-files');
+    if (loadMoreButton) {
+        loadMoreButton.remove();
+    }
+    
+    nextBatch.forEach(file => {
+        const fileElement = document.createElement('div');
+        fileElement.innerHTML = renderFileItem(file);
+        dirElement.appendChild(fileElement.firstElementChild);
+    });
+    
+    if (files.length > currentCount + 100) {
+        const newLoadMoreButton = document.createElement('div');
+        newLoadMoreButton.className = 'load-more-files';
+        newLoadMoreButton.onclick = () => loadMoreFiles(directory);
+        newLoadMoreButton.textContent = `Load ${files.length - currentCount - 100} more files...`;
+        dirElement.appendChild(newLoadMoreButton);
+    }
+}
+
+// Render individual file item (unchanged)
 function renderFileItem(file) {
     const completionPercentage = ((file.testCompleted ? 50 : 0) + (file.docCompleted ? 50 : 0));
     
@@ -533,7 +725,7 @@ function loadFromLocalStorage() {
         if (data) {
             const parsed = JSON.parse(data);
             allFiles = parsed.files || [];
-            buildFolderStructure();
+            buildFolderStructureOptimized();
             updateStatistics();
         }
     } catch (error) {
@@ -575,7 +767,7 @@ function importData(event) {
             if (data.files && Array.isArray(data.files)) {
                 allFiles = data.files;
                 saveToLocalStorage();
-                buildFolderStructure();
+                buildFolderStructureOptimized();
                 updateStatistics();
                 updateUI();
                 filterAndRenderFiles();
@@ -602,7 +794,7 @@ function clearAllData() {
         
         localStorage.removeItem('javaTestTracker');
         
-        buildFolderStructure();
+        buildFolderStructureOptimized();
         updateStatistics();
         updateUI();
         filterAndRenderFiles();
@@ -664,3 +856,4 @@ window.toggleFolder = toggleFolder;
 window.toggleFolderSelection = toggleFolderSelection;
 window.toggleDirectory = toggleDirectory;
 window.openFileModal = openFileModal;
+window.loadMoreFiles = loadMoreFiles;

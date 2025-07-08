@@ -9,10 +9,9 @@ let isProcessing = false;
 let developerAssignments = {}; // Store developer assignments per folder path
 
 // Performance optimization constants
-const BATCH_SIZE = 500; // Process files in batches to prevent UI blocking
+const BATCH_SIZE = 2000; // Process files in batches to prevent UI blocking
 const RENDER_BATCH_SIZE = 50; // Render files in smaller batches
 const VIRTUAL_SCROLL_THRESHOLD = 5000; // Use virtual scrolling for very large lists
-const BATCH_SIZE = 500; // Process files in batches to prevent UI blocking
 const LARGE_DATASET_THRESHOLD = 10000; // Enhanced optimizations for very large datasets
 const MAX_INITIAL_RENDER = 500; // Limit initial render for performance
 
@@ -249,7 +248,47 @@ async function processFilesOptimized(fileList) {
     const startTime = Date.now();
     
     try {
-        const javaFiles = fileList.filter(file => file.name.endsWith('.java'));
+        // Initial filtering to avoid processing non-Java files
+        console.log(`Total files to process: ${fileList.length}`);
+        updateProgress(0, `Processing ${fileList.length} files...`, 'Filtering Java files...');
+        
+        // Use more efficient filtering for large file sets
+        let javaFiles = [];
+        let nonJavaCount = 0;
+        // Adjust chunk size based on total file count for better performance
+        const chunkSize = fileList.length > 100000 ? 10000 : 
+                          fileList.length > 50000 ? 5000 : 3000; 
+        
+        for (let i = 0; i < fileList.length; i += chunkSize) {
+            const chunk = fileList.slice(i, i + chunkSize);
+            
+            // Filter in smaller batches - focus only on Java files to save memory
+            const javaChunk = chunk.filter(file => {
+                if (!file || !file.name) return false;
+                const isJava = file.name.toLowerCase().endsWith('.java');
+                if (!isJava) nonJavaCount++;
+                return isJava;
+            });
+            
+            javaFiles.push(...javaChunk);
+            
+            // Update progress less frequently for very large datasets
+            const updateFrequency = fileList.length > 100000 ? chunkSize * 5 : 
+                                   fileList.length > 50000 ? chunkSize * 2 : chunkSize;
+                                   
+            if (i % updateFrequency === 0 || i + chunkSize >= fileList.length) {
+                const percent = Math.min(5, Math.round((i / fileList.length) * 5));
+                updateProgress(
+                    percent, 
+                    `Filtering Java files... (${i}/${fileList.length})`,
+                    `Found ${javaFiles.length} Java files so far, skipped ${nonJavaCount} non-Java files`
+                );
+                // Allow UI to update - shorter delay for better performance
+                await new Promise(resolve => setTimeout(resolve, 1));
+            }
+        }
+        
+        console.log(`Java files found: ${javaFiles.length}`);
         
         if (javaFiles.length === 0) {
             hideProgressModal();
@@ -258,36 +297,83 @@ async function processFilesOptimized(fileList) {
         }
         
         // Show progress information
-        updateProgress(0, `Found ${javaFiles.length} Java files. Starting processing...`, 'Initializing...');
+        updateProgress(5, `Found ${javaFiles.length} Java files. Starting processing...`, 'Initializing...');
         
         // Create lookup maps for faster file detection (O(1) instead of O(n))
         const testFileMap = new Map();
         const docFileMap = new Map();
         
-        updateProgress(5, 'Building file index for faster detection...', 'Creating lookup maps...');
+        updateProgress(7, 'Building file index for faster detection...', 'Creating lookup maps...');
         
-        // Build lookup maps for test and doc files
-        fileList.forEach((file, index) => {
-            const path = file.webkitRelativePath || file.name;
-            const fileName = file.name;
+        // Build lookup maps for test and doc files - only scan certain file types for efficiency
+        const totalFiles = fileList.length;
+        let processedCount = 0;
+        
+        // Use a larger chunk size for very large datasets to improve performance
+        const indexChunkSize = fileList.length > 100000 ? 20000 : 
+                              fileList.length > 50000 ? 10000 : chunkSize;
+        
+        // Process in chunks to avoid freezing the UI
+        for (let i = 0; i < totalFiles; i += indexChunkSize) {
+            const filesChunk = fileList.slice(i, Math.min(i + indexChunkSize, totalFiles));
+            const testFiles = [];
+            const docFiles = [];
             
-            if (fileName.endsWith('_tests.java')) {
+            // First separate the files by type to reduce memory pressure
+            filesChunk.forEach(file => {
+                if (!file || !file.name) return;
+                
+                const fileName = file.name.toLowerCase();
+                
+                // Only collect test files and PDF files for mapping
+                if (fileName.endsWith('_tests.java')) {
+                    testFiles.push(file);
+                } 
+                else if (fileName.endsWith('.pdf')) {
+                    docFiles.push(file);
+                }
+            });
+            
+            // Now process each type separately
+            testFiles.forEach(file => {
+                const path = file.webkitRelativePath || file.name;
+                const fileName = file.name.toLowerCase();
                 const baseFileName = fileName.replace('_tests.java', '.java');
                 testFileMap.set(baseFileName, file);
-                testFileMap.set(path.replace('_tests.java', '.java'), file);
-            } else if (fileName.endsWith('.pdf')) {
+                
+                // Also map with the full path
+                const pathWithoutTest = path.toLowerCase().replace('_tests.java', '.java');
+                testFileMap.set(pathWithoutTest, file);
+            });
+            
+            docFiles.forEach(file => {
+                const path = file.webkitRelativePath || file.name;
+                const fileName = file.name.toLowerCase();
                 const baseFileName = fileName.replace('.pdf', '.java');
                 docFileMap.set(baseFileName, file);
-                docFileMap.set(path.replace('.pdf', '.java'), file);
-            }
+                
+                // Also map with the full path
+                const pathWithoutExt = path.toLowerCase().replace('.pdf', '.java');
+                docFileMap.set(pathWithoutExt, file);
+            });
             
-            // Update progress during index building for large file lists
-            if (fileList.length > 10000 && index % 1000 === 0) {
-                const indexProgress = 5 + (index / fileList.length) * 10;
-                updateProgress(indexProgress, `Building index... ${index}/${fileList.length}`, 'Processing file mappings...');
+            processedCount += filesChunk.length;
+            
+            // Update progress less frequently for better performance
+            const updateFrequency = fileList.length > 100000 ? indexChunkSize * 2 : indexChunkSize;
+            
+            if (i % updateFrequency === 0 || i + indexChunkSize >= totalFiles) {
+                const indexProgress = 7 + (processedCount / totalFiles) * 8;
+                updateProgress(
+                    indexProgress, 
+                    `Building index... (${processedCount}/${totalFiles})`, 
+                    `Found ${testFileMap.size} test files and ${docFileMap.size} doc files`
+                );
+                await new Promise(resolve => setTimeout(resolve, 1)); // Shorter delay for UI update
             }
-        });
+        }
         
+        console.log(`Index built: ${testFileMap.size} test files, ${docFileMap.size} doc files`);
         updateProgress(15, 'Processing Java files in optimized batches...', 'Starting batch processing...');
         
         // Use dynamic batch sizing for optimal performance
@@ -299,44 +385,135 @@ async function processFilesOptimized(fileList) {
         performanceMetrics.totalFiles = javaFiles.length;
         const processingStartTime = Date.now();
         
-        for (let i = 0; i < javaFiles.length; i += optimalBatchSize) {
-            const batch = javaFiles.slice(i, i + optimalBatchSize);
-            const currentBatch = Math.floor(i / optimalBatchSize) + 1;
-            const batchProgress = 15 + ((currentBatch - 1) / totalBatches) * 60; // 15% to 75%
+        // For very large datasets, reduce console logging and use specialized processing
+        const isVeryLargeDataset = javaFiles.length > 10000;
+        const isExtremelyLargeDataset = javaFiles.length > 50000;
+        
+        // For extremely large datasets, further optimize batch size and processing
+        const processingChunkSize = isExtremelyLargeDataset ? optimalBatchSize * 2 : optimalBatchSize;
+        
+        console.log(`Processing ${javaFiles.length} Java files with batch size ${processingChunkSize}`);
+        
+        // Pre-allocate array for better performance with large sets
+        processedFiles = new Array(javaFiles.length);
+        let fileProcessedCount = 0;
+        
+        for (let i = 0; i < javaFiles.length; i += processingChunkSize) {
+            const batch = javaFiles.slice(i, i + processingChunkSize);
+            const currentBatch = Math.floor(i / processingChunkSize) + 1;
+            const totalBatchesAdjusted = Math.ceil(javaFiles.length / processingChunkSize);
+            const batchProgress = 15 + ((currentBatch - 1) / totalBatchesAdjusted) * 60; // 15% to 75%
             
-            // Calculate time estimates
-            const processedSoFar = i;
-            const elapsed = Date.now() - startTime;
-            const timePerFile = processedSoFar > 0 ? elapsed / processedSoFar : 0;
-            const remaining = javaFiles.length - processedSoFar;
-            const estimatedTimeRemaining = timePerFile * remaining;
+            // Calculate time estimates (less frequently for large sets)
+            const updateFrequency = isExtremelyLargeDataset ? processingChunkSize * 2 : 
+                                   isVeryLargeDataset ? processingChunkSize : processingChunkSize / 2;
+                                   
+            if (i % updateFrequency === 0 || i + processingChunkSize >= javaFiles.length) {
+                const processedSoFar = i;
+                const elapsed = Date.now() - startTime;
+                const timePerFile = processedSoFar > 0 ? elapsed / processedSoFar : 0;
+                const remaining = javaFiles.length - processedSoFar;
+                const estimatedTimeRemaining = timePerFile * remaining;
+                
+                updateProgress(
+                    batchProgress, 
+                    `Processing batch ${currentBatch}/${totalBatchesAdjusted}`,
+                    `Files ${i + 1}-${Math.min(i + processingChunkSize, javaFiles.length)} of ${javaFiles.length}`,
+                    estimatedTimeRemaining > 0 ? `Estimated time remaining: ${formatTime(estimatedTimeRemaining)}` : ''
+                );
+            }
             
-            updateProgress(
-                batchProgress, 
-                `Processing batch ${currentBatch}/${totalBatches}`,
-                `Files ${i + 1}-${Math.min(i + optimalBatchSize, javaFiles.length)} of ${javaFiles.length}`,
-                estimatedTimeRemaining > 0 ? `Estimated time remaining: ${formatTime(estimatedTimeRemaining)}` : ''
-            );
+            // Process the batch efficiently
+            const batchResults = [];
+            for (const file of batch) {
+                batchResults.push(processIndividualFile(file, testFileMap, docFileMap));
+            }
             
-            const batchResults = batch.map(file => processIndividualFile(file, testFileMap, docFileMap));
-            processedFiles.push(...batchResults);
+            // Add results to the pre-allocated array
+            for (let j = 0; j < batchResults.length; j++) {
+                processedFiles[fileProcessedCount + j] = batchResults[j];
+            }
+            fileProcessedCount += batchResults.length;
             
-            // Allow UI to update between batches
-            await new Promise(resolve => setTimeout(resolve, 20));
+            // Allow UI to update between batches - less frequently for large sets
+            const uiUpdateDelay = isExtremelyLargeDataset ? 1 : 5; // Faster UI updates for large datasets
+            
+            if (i % updateFrequency === 0 || i + processingChunkSize >= javaFiles.length) {
+                await new Promise(resolve => setTimeout(resolve, uiUpdateDelay));
+            }
         }
+        
+        // Make sure we don't have any undefined entries in the array
+        processedFiles = processedFiles.filter(file => file !== undefined);
         
         updateProgress(80, 'Merging with existing files...', 'Checking for duplicates...');
         
-        // Merge with existing files (avoid duplicates)
-        const existingPaths = new Set(allFiles.map(f => f.relativePath));
-        const newFiles = processedFiles.filter(f => !existingPaths.has(f.relativePath));
+        // For very large datasets, use more efficient Set operations
+        const isVeryLarge = processedFiles.length > 5000;
+        let newFiles = [];
         
+        if (isVeryLarge) {
+            // Use a more memory-efficient approach
+            updateProgress(82, 'Using optimized merge for large dataset...', `Processing ${processedFiles.length} files`);
+            
+            // Build set of paths for faster lookups
+            const existingPaths = new Set();
+            allFiles.forEach(file => existingPaths.add(file.relativePath));
+            
+            // Filter in smaller chunks to avoid memory issues
+            const mergeChunkSize = 2000;
+            for (let i = 0; i < processedFiles.length; i += mergeChunkSize) {
+                const chunk = processedFiles.slice(i, i + mergeChunkSize);
+                const newChunk = chunk.filter(f => !existingPaths.has(f.relativePath));
+                newFiles.push(...newChunk);
+                
+                if (i % (mergeChunkSize * 2) === 0) {
+                    updateProgress(
+                        82 + (i / processedFiles.length) * 2,
+                        `Merging files... (${i}/${processedFiles.length})`,
+                        `Found ${newFiles.length} new files so far`
+                    );
+                    await new Promise(resolve => setTimeout(resolve, 5));
+                }
+            }
+        } else {
+            // For smaller sets, use the original approach
+            const existingPaths = new Set(allFiles.map(f => f.relativePath));
+            newFiles = processedFiles.filter(f => !existingPaths.has(f.relativePath));
+        }
+        
+        // For very large datasets, consider limiting how many new files we add at once
+        // to avoid memory issues with extremely large uploads
+        const maxFilesToAddAtOnce = 1000000; // Increased to 1 million files
+        if (newFiles.length > maxFilesToAddAtOnce) {
+            console.warn(`Limiting new files to ${maxFilesToAddAtOnce} out of ${newFiles.length} to prevent memory issues`);
+            newFiles = newFiles.slice(0, maxFilesToAddAtOnce);
+            
+            // Show a warning to the user
+            setTimeout(() => {
+                alert(`Warning: Only the first ${maxFilesToAddAtOnce} new files were imported to prevent browser performance issues. Try uploading in smaller batches.`);
+            }, 1000);
+        }
+        
+        console.log(`Adding ${newFiles.length} new files to existing ${allFiles.length} files`);
         allFiles = [...allFiles, ...newFiles];
         
         updateProgress(85, 'Saving progress to local storage...', 'Persisting data...');
         
-        // Save to localStorage
-        saveToLocalStorage();
+        try {
+            // Save in chunks for very large datasets to avoid memory errors
+            if (allFiles.length > 10000) {
+                // Use a more efficient storage approach
+                saveToLocalStorageLarge();
+            } else {
+                // Standard approach for smaller datasets
+                saveToLocalStorage();
+            }
+        } catch (err) {
+            console.error('Error saving to localStorage:', err);
+            // Fallback handling when localStorage fails (often due to quota limits)
+            showError('Warning: Unable to save all files to local storage due to browser limits. Your data is in memory but may not persist if you close the browser.');
+        }
         
         updateProgress(90, 'Building folder structure...', 'Organizing files into hierarchy...');
         
@@ -487,27 +664,55 @@ function getOptimalBatchSize(fileCount) {
     // Base batch size
     let batchSize = BATCH_SIZE;
     
-    // Adjust based on file count
+    // Progressive scaling based on file count
     if (fileCount < 1000) {
-        batchSize = Math.min(50, fileCount);
+        batchSize = Math.min(100, fileCount);
+    } else if (fileCount < 5000) {
+        batchSize = 250;
     } else if (fileCount < 10000) {
-        batchSize = 100;
-    } else if (fileCount < 50000) {
-        batchSize = 200;
-    } else {
         batchSize = 500;
+    } else if (fileCount < 25000) {
+        batchSize = 1000;
+    } else if (fileCount < 50000) {
+        batchSize = 2000;
+    } else if (fileCount < 100000) {
+        batchSize = 3000;
+    } else if (fileCount < 500000) {
+        // For extremely large datasets, process in even larger batches
+        batchSize = 5000;
+    } else {
+        // Ultra-large datasets
+        batchSize = 10000;
     }
     
-    // Adjust based on available memory (rough estimation)
-    const availableMemory = navigator.deviceMemory || 4; // Default to 4GB if not available
-    if (availableMemory < 2) {
-        batchSize = Math.floor(batchSize * 0.5);
-    } else if (availableMemory > 8) {
-        batchSize = Math.floor(batchSize * 1.5);
+    // Take into account browser performance capabilities
+    try {
+        // Detect browser capability (rough estimation)
+        const isHighPerformanceBrowser = 
+            window.navigator.hardwareConcurrency > 4 || 
+            window.navigator.deviceMemory > 4;
+            
+        // Adjust based on available memory (rough estimation)
+        const availableMemory = navigator.deviceMemory || 4; // Default to 4GB if not available
+        
+        if (availableMemory < 2) {
+            // Low memory devices - reduce batch size
+            batchSize = Math.floor(batchSize * 0.5);
+            console.log('Low memory device detected, reducing batch size');
+        } else if (isHighPerformanceBrowser && availableMemory > 8) {
+            // High performance devices - increase batch size
+            batchSize = Math.floor(batchSize * 1.5);
+            console.log('High performance device detected, increasing batch size');
+        }
+    } catch (e) {
+        console.warn('Could not detect browser capabilities, using default batch size', e);
     }
     
-    // Ensure minimum batch size of 10
-    return Math.max(10, batchSize);
+    // Set reasonable limits regardless of calculations
+    batchSize = Math.max(50, Math.min(batchSize, 10000));
+    
+    console.log(`Using batch size of ${batchSize} for ${fileCount} files`);
+    return batchSize;
 }
 
 // Optimized folder structure building
@@ -1130,21 +1335,222 @@ function saveToLocalStorage() {
         }));
     } catch (error) {
         console.error('Error saving to localStorage:', error);
-        showError('Failed to save data locally');
+        showError('Failed to save data locally. Your dataset may be too large for browser storage.');
     }
+}
+
+// Efficient storage function for large datasets
+function saveToLocalStorageLarge() {
+    try {
+        // Store metadata separately
+        const metadata = {
+            fileCount: allFiles.length,
+            lastSaved: new Date().toISOString(),
+            version: '1.2',
+            chunkSize: 0
+        };
+        
+        // Determine optimal chunk size based on file count
+        let chunkSize = 500;
+        if (allFiles.length < 5000) {
+            chunkSize = 500;
+        } else if (allFiles.length < 20000) {
+            chunkSize = 1000;
+        } else if (allFiles.length < 50000) {
+            chunkSize = 2000;
+        } else if (allFiles.length < 100000) {
+            chunkSize = 3000;
+        } else {
+            chunkSize = 5000;
+        }
+        
+        metadata.chunkSize = chunkSize;
+        localStorage.setItem('javaTestTracker_meta', JSON.stringify(metadata));
+        
+        const totalChunks = Math.ceil(allFiles.length / chunkSize);
+        
+        // Clear any existing chunks first - use a more efficient approach
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('javaTestTracker_chunk_')) {
+                keysToRemove.push(key);
+            }
+        }
+        
+        // Batch remove keys to improve performance
+        keysToRemove.forEach(key => localStorage.removeItem(key));
+        
+        // Show progress for large datasets
+        const showSaveProgress = totalChunks > 10;
+        let lastProgressUpdate = Date.now();
+        
+        // Store new chunks with optimized serialization
+        for (let i = 0; i < totalChunks; i++) {
+            const start = i * chunkSize;
+            const end = Math.min(start + chunkSize, allFiles.length);
+            const chunk = allFiles.slice(start, end);
+            
+            try {
+                localStorage.setItem(`javaTestTracker_chunk_${i}`, JSON.stringify(chunk));
+                
+                // Show progress update for large datasets (but not too frequently)
+                if (showSaveProgress && (i % 5 === 0 || i === totalChunks - 1) && 
+                    Date.now() - lastProgressUpdate > 300) {
+                    const saveProgress = Math.round((i + 1) / totalChunks * 100);
+                    updateProgress(
+                        85 + (saveProgress / 100) * 5, 
+                        `Saving data: ${saveProgress}%`,
+                        `Chunk ${i + 1}/${totalChunks}`
+                    );
+                    lastProgressUpdate = Date.now();
+                }
+            } catch (chunkError) {
+                console.error(`Error saving chunk ${i}:`, chunkError);
+                
+                // Try saving a smaller chunk if possible
+                if (chunk.length > 200) {
+                    const halfChunkSize = Math.floor(chunk.length / 2);
+                    try {
+                        localStorage.setItem(`javaTestTracker_chunk_${i}_p1`, 
+                            JSON.stringify(chunk.slice(0, halfChunkSize)));
+                        localStorage.setItem(`javaTestTracker_chunk_${i}_p2`, 
+                            JSON.stringify(chunk.slice(halfChunkSize)));
+                        console.log(`Split chunk ${i} into smaller pieces`);
+                    } catch (splitError) {
+                        console.error(`Failed to save split chunks for ${i}:`, splitError);
+                        throw new Error(`Storage quota exceeded. Could only save ${i * chunkSize} of ${allFiles.length} files.`);
+                    }
+                } else {
+                    throw chunkError; // Re-throw if chunks are already small
+                }
+            }
+        }
+        
+        console.log(`Saved ${allFiles.length} files in ${totalChunks} chunks`);
+        showSuccess(`Successfully saved ${allFiles.length} files to local storage`);
+    } catch (error) {
+        console.error('Error saving to localStorage:', error);
+        showError('Failed to save all data: ' + error.message);
+        return false;
+    }
+    return true;
 }
 
 function loadFromLocalStorage() {
     try {
+        // Show loading indicator for potentially large datasets
+        showProgressModal();
+        updateProgress(0, 'Loading saved data...', 'Checking for saved files');
+        
+        // First try the standard storage format
         const data = localStorage.getItem('javaTestTracker');
         if (data) {
+            updateProgress(10, 'Loading from standard storage...', 'Parsing data');
             const parsed = JSON.parse(data);
             allFiles = parsed.files || [];
-            buildFolderStructureOptimized();
-            updateStatistics();
+            console.log(`Loaded ${allFiles.length} files from standard storage`);
+            updateProgress(100, 'Loading complete!', `Loaded ${allFiles.length} files`);
+        } 
+        // If not found, try the chunked format
+        else {
+            const metaData = localStorage.getItem('javaTestTracker_meta');
+            if (metaData) {
+                const meta = JSON.parse(metaData);
+                updateProgress(10, 'Loading from chunked storage...', `Found ${meta.fileCount} files`);
+                console.log(`Found chunked storage with ${meta.fileCount} files`);
+                
+                // Pre-allocate array for better performance with very large datasets
+                const estimatedFileCount = meta.fileCount || 10000;
+                allFiles = [];
+                
+                // Load all chunks
+                let chunkIndex = 0;
+                let continueLoading = true;
+                const startTime = Date.now();
+                
+                while (continueLoading) {
+                    // Try regular chunk first
+                    let chunkData = localStorage.getItem(`javaTestTracker_chunk_${chunkIndex}`);
+                    
+                    if (chunkData) {
+                        try {
+                            const chunkFiles = JSON.parse(chunkData);
+                            allFiles.push(...chunkFiles);
+                            
+                            // Update progress for large datasets
+                            if (meta.fileCount > 0) {
+                                const progressPct = Math.min(90, 10 + (allFiles.length / meta.fileCount * 80));
+                                if (chunkIndex % 2 === 0 || allFiles.length >= meta.fileCount) {
+                                    updateProgress(
+                                        progressPct, 
+                                        `Loading chunk ${chunkIndex + 1}...`, 
+                                        `Loaded ${allFiles.length} of ${meta.fileCount} files`,
+                                        `Elapsed: ${formatTime(Date.now() - startTime)}`
+                                    );
+                                }
+                            }
+                            chunkIndex++;
+                            
+                        } catch (parseError) {
+                            console.error(`Error parsing chunk ${chunkIndex}:`, parseError);
+                            chunkIndex++; // Skip this chunk
+                        }
+                    } 
+                    // Try split chunks if regular chunk not found
+                    else {
+                        const part1 = localStorage.getItem(`javaTestTracker_chunk_${chunkIndex}_p1`);
+                        const part2 = localStorage.getItem(`javaTestTracker_chunk_${chunkIndex}_p2`);
+                        
+                        if (part1 && part2) {
+                            try {
+                                const chunkFiles1 = JSON.parse(part1);
+                                const chunkFiles2 = JSON.parse(part2);
+                                allFiles.push(...chunkFiles1, ...chunkFiles2);
+                                chunkIndex++;
+                            } catch (splitParseError) {
+                                console.error(`Error parsing split chunk ${chunkIndex}:`, splitParseError);
+                                chunkIndex++; // Skip this chunk
+                            }
+                        } else {
+                            continueLoading = false; // No more chunks
+                        }
+                    }
+                    
+                    // Safety check to prevent infinite loops
+                    if (chunkIndex > 1000) {
+                        console.warn('Too many chunks, stopping load');
+                        break;
+                    }
+                }
+                
+                console.log(`Finished loading ${allFiles.length} files from chunked storage`);
+                updateProgress(95, 'Loading complete!', `Loaded ${allFiles.length} files`);
+            } else {
+                // No saved data
+                updateProgress(100, 'No saved data found', 'Starting fresh');
+                setTimeout(() => hideProgressModal(), 500);
+                return;
+            }
+        }
+        
+        // Only proceed with building the UI if we have files
+        if (allFiles.length > 0) {
+            updateProgress(97, 'Building folder structure...', 'Organizing files');
+            // We'll use setTimeout to allow the progress bar to update
+            setTimeout(async () => {
+                await buildFolderStructureOptimized();
+                updateStatistics();
+                updateProgress(100, 'Loading complete!', `Ready with ${allFiles.length} files`);
+                setTimeout(() => hideProgressModal(), 500);
+            }, 10);
+        } else {
+            hideProgressModal();
         }
     } catch (error) {
         console.error('Error loading from localStorage:', error);
+        hideProgressModal();
+        showError('Failed to load saved data. Starting with empty state.');
         allFiles = [];
     }
 }
@@ -1283,14 +1689,16 @@ function updateProgress(percentage, mainText, subText = '', timeEstimate = '') {
         const progressBar = modal.querySelector('.progress-fill') || 
                            modal.querySelector('.progress-bar');
         
+        // Progress percentage element
+        const progressPercentageEl = modal.querySelector('#progressPercentage');
+        
         // Try multiple selectors for each element type to handle both HTML versions
         // Status text elements
         const statusTextElements = [
             modal.querySelector('#progressStatus'),
             modal.querySelector('.progress-status'),
             modal.querySelector('#progressTitle'),
-            modal.querySelector('.progress-main-text'),
-            modal.querySelector('#progressMessage')
+            modal.querySelector('.progress-main-text')
         ].filter(Boolean); // Remove null/undefined entries
         
         // Message elements 
@@ -1299,7 +1707,7 @@ function updateProgress(percentage, mainText, subText = '', timeEstimate = '') {
             modal.querySelector('.progress-sub-text'),
             modal.querySelector('#progressStats')
         ].filter(Boolean);
-        
+
         // Stats/time estimate elements
         const statsElements = [
             modal.querySelector('#progressTimeEstimate'),
@@ -1310,6 +1718,7 @@ function updateProgress(percentage, mainText, subText = '', timeEstimate = '') {
         
         // Percentage display
         const percentageElements = [
+            progressPercentageEl,
             modal.querySelector('#progressPercentage'),
             modal.querySelector('.progress-percentage')
         ].filter(Boolean);
@@ -1318,6 +1727,16 @@ function updateProgress(percentage, mainText, subText = '', timeEstimate = '') {
         if (isNaN(percentage)) {
             console.warn("Invalid percentage passed to updateProgress:", percentage);
             percentage = 0;
+        }
+        
+        // For very large file uploads, add memory usage info if available
+        if (performance && performance.memory && percentage > 0 && percentage < 100) {
+            const memoryInfo = `Memory: ${Math.round(performance.memory.usedJSHeapSize / 1048576)} MB / ${Math.round(performance.memory.jsHeapSizeLimit / 1048576)} MB`;
+            if (timeEstimate) {
+                timeEstimate = `${timeEstimate} | ${memoryInfo}`;
+            } else {
+                timeEstimate = memoryInfo;
+            }
         }
         
         // Cap percentage between 0 and 100
@@ -1365,16 +1784,66 @@ function updateProgress(percentage, mainText, subText = '', timeEstimate = '') {
     }
 }
 
+// Helper function to show success message
+function showSuccess(message) {
+    if (!message) return;
+    
+    const existingToast = document.getElementById('toast-notification');
+    if (existingToast) existingToast.remove();
+    
+    const toast = document.createElement('div');
+    toast.id = 'toast-notification';
+    toast.className = 'toast-notification success';
+    toast.innerHTML = `
+        <div class="toast-icon">✓</div>
+        <div class="toast-message">${message}</div>
+    `;
+    document.body.appendChild(toast);
+    
+    // Automatically remove after 5 seconds
+    setTimeout(() => {
+        toast.classList.add('fade-out');
+        setTimeout(() => toast.remove(), 500);
+    }, 5000);
+}
+
+// Helper function to show error message
+function showError(message) {
+    if (!message) return;
+    
+    const existingToast = document.getElementById('toast-notification');
+    if (existingToast) existingToast.remove();
+    
+    const toast = document.createElement('div');
+    toast.id = 'toast-notification';
+    toast.className = 'toast-notification error';
+    toast.innerHTML = `
+        <div class="toast-icon">⚠️</div>
+        <div class="toast-message">${message}</div>
+    `;
+    document.body.appendChild(toast);
+    
+    // Automatically remove after 10 seconds for errors
+    setTimeout(() => {
+        toast.classList.add('fade-out');
+        setTimeout(() => toast.remove(), 500);
+    }, 10000);
+}
+
 // Format time in human-readable format
 function formatTime(milliseconds) {
-    if (milliseconds < 1000) return `${Math.round(milliseconds)}ms`;
+    if (milliseconds < 1000) return `${milliseconds}ms`;
     
-    const seconds = Math.round(milliseconds / 1000);
+    const seconds = Math.floor(milliseconds / 1000);
     if (seconds < 60) return `${seconds}s`;
     
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
-    return `${minutes}m ${remainingSeconds}s`;
+    if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+    
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return `${hours}h ${remainingMinutes}m`;
 }
 
 // Performance analysis and reporting

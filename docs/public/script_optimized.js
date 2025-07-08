@@ -9,9 +9,10 @@ let isProcessing = false;
 let developerAssignments = {}; // Store developer assignments per folder path
 
 // Performance optimization constants
-const BATCH_SIZE = 100; // Process files in batches
+const BATCH_SIZE = 500; // Process files in batches to prevent UI blocking
 const RENDER_BATCH_SIZE = 50; // Render files in smaller batches
-const VIRTUAL_SCROLL_THRESHOLD = 1000; // Use virtual scrolling for large lists
+const VIRTUAL_SCROLL_THRESHOLD = 5000; // Use virtual scrolling for very large lists
+const BATCH_SIZE = 500; // Process files in batches to prevent UI blocking
 const LARGE_DATASET_THRESHOLD = 10000; // Enhanced optimizations for very large datasets
 const MAX_INITIAL_RENDER = 500; // Limit initial render for performance
 
@@ -412,8 +413,11 @@ function processIndividualFile(file, testFileMap, docFileMap) {
         // Get file path and handle potential path format issues
         const filePath = file.webkitRelativePath || file.name;
         
+        // Normalize path separators (handle both Windows and Unix paths)
+        const normalizedPath = filePath.replace(/\\/g, '/');
+        
         // Parse path components
-        const pathParts = filePath.split('/');
+        const pathParts = normalizedPath.split('/');
         const fileName = pathParts[pathParts.length - 1];
         const directory = pathParts.slice(0, -1).join('/') || 'root';
         
@@ -421,6 +425,9 @@ function processIndividualFile(file, testFileMap, docFileMap) {
         if (!fileName || fileName.length === 0) {
             console.warn("Warning: Empty file name detected", file);
         }
+        
+        // Additional debug information for paths
+        console.log(`Processing file: ${fileName}, Directory: ${directory}`);
         
         // Fast lookup for test and doc files using maps (with safeguards)
         const testFile = testFileMap.get(fileName) || testFileMap.get(filePath);
@@ -507,50 +514,75 @@ function getOptimalBatchSize(fileCount) {
 async function buildFolderStructureOptimized() {
     folderStructure = {};
     
+    // Normalize all file paths to use consistent separators
+    allFiles.forEach(file => {
+        if (file.relativePath) {
+            // Convert Windows backslashes to forward slashes for consistency
+            file.normalizedPath = file.relativePath.replace(/\\/g, '/');
+            
+            // Extract directory path from the normalized path
+            const lastSlashIndex = file.normalizedPath.lastIndexOf('/');
+            file.directory = lastSlashIndex > -1 ? file.normalizedPath.substring(0, lastSlashIndex) : '';
+        }
+    });
+    
     // Process in batches to prevent UI blocking
     for (let i = 0; i < allFiles.length; i += BATCH_SIZE) {
         const batch = allFiles.slice(i, i + BATCH_SIZE);
         
         batch.forEach(file => {
             try {
-                if (!file || !file.directory) {
+                if (!file || typeof file.directory === 'undefined') {
                     console.error("Invalid file object encountered:", file);
                     return; // Skip this file
                 }
                 
+                // Split the directory path into parts
                 const pathParts = file.directory.split('/').filter(part => part);
-                let currentLevel = folderStructure;
                 
-                pathParts.forEach(part => {
+                // Navigate/create the folder structure
+                let currentLevel = folderStructure;
+                let currentPath = '';
+                
+                for (const part of pathParts) {
+                    currentPath = currentPath ? `${currentPath}/${part}` : part;
+                    
                     if (!currentLevel[part]) {
-                        currentLevel[part] = { files: [], subfolders: {} };
+                        currentLevel[part] = { 
+                            files: [], 
+                            subfolders: {},
+                            path: currentPath  // Store the full path for reference
+                        };
                     }
                     currentLevel = currentLevel[part].subfolders;
-                });
+                }
                 
                 // Add file to the appropriate folder
-                let finalFolder;
+                let targetFolder;
+                
                 if (pathParts.length > 0) {
                     // Navigate to the correct folder
-                    finalFolder = folderStructure;
-                    for (const part of pathParts) {
-                        finalFolder = finalFolder[part];
+                    targetFolder = folderStructure;
+                    for (let j = 0; j < pathParts.length; j++) {
+                        if (!targetFolder[pathParts[j]]) {
+                            console.error(`Folder structure missing at ${pathParts.slice(0, j+1).join('/')} for file ${file.name}`);
+                            break;
+                        }
+                        if (j === pathParts.length - 1) {
+                            // We've reached the target folder
+                            targetFolder[pathParts[j]].files.push(file);
+                        } else {
+                            // Move down a level
+                            targetFolder = targetFolder[pathParts[j]].subfolders;
+                        }
                     }
                 } else {
                     // Root level files
                     if (!folderStructure.root) {
-                        folderStructure.root = { files: [], subfolders: {} };
+                        folderStructure.root = { files: [], subfolders: {}, path: '' };
                     }
-                    finalFolder = folderStructure.root;
+                    folderStructure.root.files.push(file);
                 }
-                
-                // Ensure the files array exists
-                if (!finalFolder.files) {
-                    finalFolder.files = [];
-                }
-                
-                // Add the file
-                finalFolder.files.push(file);
             } catch (err) {
                 console.error("Error processing file in buildFolderStructureOptimized:", err, file);
             }
@@ -559,9 +591,11 @@ async function buildFolderStructureOptimized() {
         // Allow UI to update
         if (i % (BATCH_SIZE * 5) === 0) {
             await new Promise(resolve => setTimeout(resolve, 5));
+            console.log(`Processed ${Math.min(i + BATCH_SIZE, allFiles.length)} of ${allFiles.length} files...`);
         }
     }
     
+    console.log("Folder structure built. Rendering folder tree...");
     renderFolderTree();
 }
 
@@ -713,57 +747,74 @@ async function renderFileTreeOptimized() {
         return;
     }
     
-    // For very large lists, implement virtual scrolling
-    if (filteredFiles.length > VIRTUAL_SCROLL_THRESHOLD) {
-        await renderVirtualScrollList();
-        return;
-    }
+    console.log(`Rendering ${filteredFiles.length} files...`);
     
-    // Group files by directory
+    // Group files by directory using the full path hierarchy
     const groupedFiles = {};
     filteredFiles.forEach(file => {
-        if (!groupedFiles[file.directory]) {
-            groupedFiles[file.directory] = [];
+        const dir = file.directory || '';
+        if (!groupedFiles[dir]) {
+            groupedFiles[dir] = [];
         }
-        groupedFiles[file.directory].push(file);
+        groupedFiles[dir].push(file);
     });
     
+    // Sort directories to maintain hierarchy
+    let directories = Object.keys(groupedFiles).sort((a, b) => {
+        // Sort by path depth first (shallow paths first)
+        const aDepth = a ? a.split('/').length : 0;
+        const bDepth = b ? b.split('/').length : 0;
+        
+        if (aDepth !== bDepth) return aDepth - bDepth;
+        
+        // Then alphabetically
+        return a.localeCompare(b);
+    });
+    
+    console.log(`Found ${directories.length} directories to render`);
+    
     let html = '';
-    const directories = Object.keys(groupedFiles).sort();
+    const renderedDirCount = Math.min(directories.length, 1000); // Safety limit for very large directory sets
     
     // Render in batches to prevent UI blocking
-    for (let i = 0; i < directories.length; i += RENDER_BATCH_SIZE) {
+    for (let i = 0; i < renderedDirCount; i += RENDER_BATCH_SIZE) {
         const batch = directories.slice(i, i + RENDER_BATCH_SIZE);
         
         batch.forEach(directory => {
             const files = groupedFiles[directory];
+            const dirName = directory.split('/').pop() || 'Root';
+            const sanitizedDirId = `dir-${directory.replace(/[^a-zA-Z0-9]/g, '-')}`;
+            const indentLevel = directory ? directory.split('/').length : 0;
+            const indentStyle = `margin-left: ${indentLevel * 16}px`;
+            
             html += `
-                <div class="directory-group">
+                <div class="directory-group" style="${indentStyle}">
                     <div class="directory-header" onclick="toggleDirectory('${directory}')">
                         <span class="directory-icon">📁</span>
-                        <span class="directory-name">${directory || 'Root'}</span>
+                        <span class="directory-name" title="${directory}">${dirName}</span>
                         <span class="file-count">(${files.length} files)</span>
                         <span class="expand-icon">▼</span>
                     </div>
-                    <div class="directory-files expanded" id="dir-${directory.replace(/[^a-zA-Z0-9]/g, '-')}">
-                        ${files.slice(0, 100).map(file => renderFileItem(file)).join('')}
-                        ${files.length > 100 ? `<div class="load-more-files" onclick="loadMoreFiles('${directory}')">Load ${files.length - 100} more files...</div>` : ''}
+                    <div class="directory-files expanded" id="${sanitizedDirId}">
+                        ${files.map(file => renderFileItem(file)).join('')}
                     </div>
                 </div>
             `;
         });
         
-        // Update UI in batches
+        // Update UI in batches to keep the interface responsive
         if (i % RENDER_BATCH_SIZE === 0) {
             await new Promise(resolve => setTimeout(resolve, 5));
         }
     }
     
     elements.fileTreeContainer.innerHTML = html;
+    console.log("File tree rendering complete.");
 }
 
 // Virtual scrolling for very large lists
 async function renderVirtualScrollList() {
+    console.log(`Using virtual scrolling for ${filteredFiles.length} files`);
     const container = elements.fileTreeContainer;
     const itemHeight = 60; // Approximate height of each file item
     const containerHeight = 600; // Max height of container
@@ -771,72 +822,162 @@ async function renderVirtualScrollList() {
     
     let scrollTop = 0;
     let startIndex = 0;
-    let endIndex = Math.min(visibleItems, filteredFiles.length);
+    const initialVisibleCount = Math.min(100, filteredFiles.length); // Show more files initially
+    let endIndex = initialVisibleCount;
+    
+    // Group files by directory first for better organization
+    const groupedFiles = {};
+    filteredFiles.forEach(file => {
+        const dir = file.directory || '';
+        if (!groupedFiles[dir]) {
+            groupedFiles[dir] = [];
+        }
+        groupedFiles[dir].push(file);
+    });
+    
+    // Sort directories by hierarchy
+    const directories = Object.keys(groupedFiles).sort((a, b) => {
+        const aDepth = a ? a.split('/').length : 0;
+        const bDepth = b ? b.split('/').length : 0;
+        if (aDepth !== bDepth) return aDepth - bDepth;
+        return a.localeCompare(b);
+    });
     
     function renderVisibleItems() {
         const totalHeight = filteredFiles.length * itemHeight;
-        const offsetY = startIndex * itemHeight;
         
-        const html = `
-            <div style="height: ${totalHeight}px; position: relative;">
-                <div style="transform: translateY(${offsetY}px);">
-                    ${filteredFiles.slice(startIndex, endIndex).map(file => renderFileItem(file)).join('')}
+        let html = `
+            <div class="virtual-scroll-container" style="height: ${Math.min(totalHeight, 5000)}px; overflow-y: auto;">
+                <div class="virtual-scroll-info" style="position: sticky; top: 0; background: #f5f5f5; padding: 8px; border-bottom: 1px solid #ddd; z-index: 100;">
+                    Showing files from ${filteredFiles.length} total files (scroll to load more)
                 </div>
-            </div>
-            <div class="virtual-scroll-info">
-                Showing ${startIndex + 1}-${endIndex} of ${filteredFiles.length} files
-            </div>
         `;
         
+        // Render directory groups with their files
+        let renderedFileCount = 0;
+        let renderedDirCount = 0;
+        
+        for (const directory of directories) {
+            if (renderedDirCount >= 100) break; // Safety limit for very large directory sets
+            
+            const files = groupedFiles[directory];
+            if (!files || files.length === 0) continue;
+            
+            const dirName = directory.split('/').pop() || 'Root';
+            const sanitizedDirId = `dir-${directory.replace(/[^a-zA-Z0-9]/g, '-')}`;
+            const indentLevel = directory ? directory.split('/').length : 0;
+            const indentStyle = `margin-left: ${indentLevel * 16}px`;
+            
+            html += `
+                <div class="directory-group" style="${indentStyle}">
+                    <div class="directory-header" onclick="toggleDirectory('${directory}')">
+                        <span class="directory-icon">📁</span>
+                        <span class="directory-name" title="${directory}">${dirName}</span>
+                        <span class="file-count">(${files.length} files)</span>
+                        <span class="expand-icon">▼</span>
+                    </div>
+                    <div class="directory-files expanded" id="${sanitizedDirId}">
+            `;
+            
+            // Render files in this directory (up to a reasonable limit per directory)
+            const filesToShow = files.slice(0, 500); // Allow up to 500 files per directory
+            html += filesToShow.map(file => renderFileItem(file)).join('');
+            
+            if (files.length > 500) {
+                html += `<div class="load-more-files" onclick="loadMoreFiles('${directory}')">
+                    Load ${files.length - 500} more files in this directory...
+                </div>`;
+            }
+            
+            html += `
+                    </div>
+                </div>
+            `;
+            
+            renderedFileCount += filesToShow.length;
+            renderedDirCount++;
+            
+            if (renderedFileCount >= 1000) break; // Safety limit for initial render
+        }
+        
+        html += `</div>`;
         container.innerHTML = html;
+        
+        // Add scroll event for loading more when near bottom
+        const scrollContainer = container.querySelector('.virtual-scroll-container');
+        if (scrollContainer) {
+            scrollContainer.addEventListener('scroll', function() {
+                if (this.scrollHeight - this.scrollTop - this.clientHeight < 200) {
+                    // Near the bottom, load more directories if available
+                    loadMoreDirectories();
+                }
+            });
+        }
     }
     
-    // Add scroll listener for virtual scrolling
-    container.addEventListener('scroll', () => {
-        scrollTop = container.scrollTop;
-        startIndex = Math.floor(scrollTop / itemHeight);
-        endIndex = Math.min(startIndex + visibleItems + 5, filteredFiles.length); // Buffer of 5 items
-        renderVisibleItems();
-    });
+    function loadMoreDirectories() {
+        // This would be implemented to dynamically add more directories as user scrolls
+        console.log("Would load more directories here as user scrolls");
+    }
     
     renderVisibleItems();
 }
 
 // Load more files for a specific directory
 function loadMoreFiles(directory) {
+    console.log(`Loading more files for directory: ${directory}`);
     const dirElement = document.getElementById(`dir-${directory.replace(/[^a-zA-Z0-9]/g, '-')}`);
-    if (!dirElement) return;
-    
-    const groupedFiles = {};
-    filteredFiles.forEach(file => {
-        if (!groupedFiles[file.directory]) {
-            groupedFiles[file.directory] = [];
-        }
-        groupedFiles[file.directory].push(file);
-    });
-    
-    const files = groupedFiles[directory] || [];
-    const currentCount = dirElement.querySelectorAll('.file-item').length;
-    const nextBatch = files.slice(currentCount, currentCount + 100);
-    
-    const loadMoreButton = dirElement.querySelector('.load-more-files');
-    if (loadMoreButton) {
-        loadMoreButton.remove();
+    if (!dirElement) {
+        console.error(`Directory element not found for ${directory}`);
+        return;
     }
     
-    nextBatch.forEach(file => {
-        const fileElement = document.createElement('div');
-        fileElement.innerHTML = renderFileItem(file);
-        dirElement.appendChild(fileElement.firstElementChild);
-    });
+    // Get all files for this directory
+    const directoryFiles = filteredFiles.filter(file => file.directory === directory);
     
-    if (files.length > currentCount + 100) {
-        const newLoadMoreButton = document.createElement('div');
-        newLoadMoreButton.className = 'load-more-files';
-        newLoadMoreButton.onclick = () => loadMoreFiles(directory);
-        newLoadMoreButton.textContent = `Load ${files.length - currentCount - 100} more files...`;
-        dirElement.appendChild(newLoadMoreButton);
+    // Get the current number of file elements
+    const currentFileCount = dirElement.querySelectorAll('.file-item').length;
+    console.log(`Current files: ${currentFileCount}, Total available: ${directoryFiles.length}`);
+    
+    // Get the "load more" button to replace it
+    const moreButton = dirElement.querySelector('.load-more-files');
+    if (!moreButton) {
+        console.log("No load more button found");
+        return;
     }
+    
+    // If we already have all files, exit
+    if (currentFileCount >= directoryFiles.length) {
+        console.log("All files already loaded");
+        moreButton.remove();
+        return;
+    }
+    
+    // Calculate how many more files to show
+    const remainingFiles = directoryFiles.slice(currentFileCount);
+    const filesToAdd = remainingFiles.slice(0, 500); // Add up to 500 more files at a time
+    
+    // Create HTML for the new files
+    const newFilesHtml = filesToAdd.map(file => renderFileItem(file)).join('');
+    
+    // Create new button HTML if needed
+    const stillMoreFiles = currentFileCount + filesToAdd.length < directoryFiles.length;
+    const newButtonHtml = stillMoreFiles 
+        ? `<div class="load-more-files" onclick="loadMoreFiles('${directory}')">
+            Load ${directoryFiles.length - currentFileCount - filesToAdd.length} more files...
+          </div>`
+        : '';
+    
+    // Replace the button with new files + possibly a new button
+    moreButton.insertAdjacentHTML('beforebegin', newFilesHtml);
+    
+    if (stillMoreFiles) {
+        moreButton.innerHTML = `Load ${directoryFiles.length - currentFileCount - filesToAdd.length} more files...`;
+    } else {
+        moreButton.remove();
+    }
+    
+    console.log(`Added ${filesToAdd.length} more files to directory ${directory}`);
 }
 
 // Render individual file item (unchanged)
